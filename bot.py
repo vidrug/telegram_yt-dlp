@@ -98,6 +98,12 @@ class RawFormatsCallback(CallbackData, prefix="rf"):
     session: str
 
 
+class RetryCallback(CallbackData, prefix="rt"):
+    session: str
+    fmt: str
+    remove: int  # sponsorblock: 1 = yes, 0 = no
+
+
 # ---------------------------------------------------------------------------
 # Format helpers
 # ---------------------------------------------------------------------------
@@ -324,6 +330,9 @@ def download_media(
         "quiet": True,
         "no_warnings": True,
         "progress_hooks": [progress_hook],
+        "continuedl": True,  # resume partial .part files
+        "retries": 3,  # retry on transient errors
+        "fragment_retries": 5,  # retry individual fragments (DASH/HLS)
     }
     if sponsorblock:
         ydl_opts["sponsorblock_remove"] = {"all"}
@@ -485,11 +494,12 @@ async def periodic_cleanup() -> None:
                 cleanup_session_files(sid)
                 log.info("Cleaned up expired web file: %s", sid)
 
-            # Clean orphaned dirs (1 hour, skip active web files)
+            # Clean orphaned dirs (8 hours, skip active web files)
             for d in DOWNLOAD_DIR.iterdir():
                 if d.is_dir() and d.name not in web_files:
-                    if now - d.stat().st_mtime > 3600:
+                    if now - d.stat().st_mtime > WEB_FILE_TTL:
                         shutil.rmtree(d, ignore_errors=True)
+                        sessions.pop(d.name, None)
                         log.info("Cleaned up orphaned dir: %s", d.name)
         except Exception as e:
             log.error("periodic_cleanup error: %s", e)
@@ -500,7 +510,16 @@ async def session_cleanup() -> None:
     while True:
         await asyncio.sleep(300)
         now = time.time()
-        expired = [sid for sid, s in sessions.items() if now - s["created"] > SESSION_TTL]
+        expired = []
+        for sid, s in sessions.items():
+            # Sessions with .part files (awaiting retry) live up to 8 hours
+            has_parts = any(
+                f.name.endswith(".part")
+                for f in (DOWNLOAD_DIR / sid).iterdir()
+            ) if (DOWNLOAD_DIR / sid).exists() else False
+            ttl = WEB_FILE_TTL if has_parts else SESSION_TTL
+            if now - s["created"] > ttl:
+                expired.append(sid)
         for sid in expired:
             sessions.pop(sid, None)
             cleanup_session_files(sid)
@@ -841,10 +860,210 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
         await progress_msg.delete()
 
     except yt_dlp.utils.DownloadError as e:
-        await safe_edit(progress_msg, f"❌ Ошибка скачивания:\n<code>{e}</code>")
+        log.warning("Download error for session %s: %s", sid, e)
+        retry_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔄 Повторить скачивание",
+                callback_data=RetryCallback(
+                    session=sid, fmt=fmt_id, remove=1 if sponsorblock else 0,
+                ).pack(),
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data=CancelCallback(session=sid).pack(),
+            )],
+        ])
+        err_short = str(e)[:200]
+        try:
+            await progress_msg.edit_text(
+                f"❌ Ошибка скачивания:\n<code>{err_short}</code>\n\n"
+                "Частичный файл сохранён. Нажми «Повторить» — скачивание продолжится с места остановки.",
+                reply_markup=retry_kb,
+            )
+        except Exception:
+            pass
+        # DON'T cleanup files — keep .part for resume
+        # DON'T remove session — needed for retry
+        return
     except Exception as e:
         log.exception("Download/send error for session %s", sid)
-        await safe_edit(progress_msg, f"❌ Произошла ошибка:\n<code>{e}</code>")
+        retry_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔄 Повторить скачивание",
+                callback_data=RetryCallback(
+                    session=sid, fmt=fmt_id, remove=1 if sponsorblock else 0,
+                ).pack(),
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data=CancelCallback(session=sid).pack(),
+            )],
+        ])
+        err_short = str(e)[:200]
+        try:
+            await progress_msg.edit_text(
+                f"❌ Произошла ошибка:\n<code>{err_short}</code>\n\n"
+                "Нажми «Повторить» для возобновления скачивания.",
+                reply_markup=retry_kb,
+            )
+        except Exception:
+            pass
+        return
+    finally:
+        user_downloads[user_id] = max(0, user_downloads.get(user_id, 1) - 1)
+        # Cleanup only on success or if session was consumed (web/send)
+        # On error we return early above, so this runs only on success path
+        if sid not in web_files:
+            cleanup_session_files(sid)
+        sessions.pop(sid, None)
+
+
+@router.callback_query(RetryCallback.filter())
+async def handle_retry(callback: CallbackQuery, callback_data: RetryCallback) -> None:
+    sid = callback_data.session
+    fmt_id = callback_data.fmt
+    sponsorblock = callback_data.remove == 1
+    s = sessions.get(sid)
+    if not s:
+        await callback.answer("⏰ Сессия истекла. Отправь ссылку заново.", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    if s["user_id"] != user_id:
+        await callback.answer("🚫 Это не твой запрос.", show_alert=True)
+        return
+
+    current = user_downloads.get(user_id, 0)
+    if current >= MAX_CONCURRENT_PER_USER:
+        await callback.answer(
+            f"⏳ Макс. {MAX_CONCURRENT_PER_USER} параллельных скачивания. Подожди.",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer()
+
+    # Determine format category (same logic as handle_sponsorblock)
+    is_video_only = False
+    is_custom = "+" in fmt_id or not fmt_id.isdigit()
+    selected_format = None
+    cat_label = "video_audio"
+
+    if not is_custom:
+        for cat, fmts in s["groups"].items():
+            for f in fmts:
+                if f["format_id"] == fmt_id:
+                    selected_format = f
+                    is_video_only = cat == "video_only"
+                    cat_label = cat
+                    break
+            if selected_format:
+                break
+
+    label = format_button_label(selected_format) if selected_format else fmt_id
+    sb_text = " | SponsorBlock" if sponsorblock else ""
+
+    progress_msg = await callback.message.edit_text(
+        f"🔄 Возобновляю скачивание: {label}{sb_text}\n\nПодготовка..."
+    )
+
+    user_downloads[user_id] = current + 1
+    loop = asyncio.get_running_loop()
+
+    try:
+        file_path = await loop.run_in_executor(
+            executor,
+            download_media,
+            s["url"],
+            fmt_id,
+            sid,
+            is_video_only,
+            sponsorblock,
+            loop,
+            progress_msg,
+        )
+
+        if not file_path.exists():
+            await progress_msg.edit_text("❌ Ошибка: файл не найден после скачивания.")
+            return
+
+        file_size = file_path.stat().st_size
+        title = s.get("title", "video")
+
+        if file_size > MAX_FILE_SIZE:
+            filename = f"{title}.{file_path.suffix.lstrip('.')}"
+            web_files[sid] = {
+                "path": file_path,
+                "created": time.time(),
+                "filename": filename,
+            }
+            encoded_name = quote(filename)
+            link = f"{EXTERNAL_URL}/dl/{sid}/{encoded_name}"
+            await progress_msg.edit_text(
+                f"📦 Файл слишком большой для Telegram "
+                f"({format_filesize(file_size)}).\n\n"
+                f"⬇️ <a href=\"{link}\">Скачать файл</a>\n\n"
+                f"Ссылка действует 8 часов.",
+            )
+            sessions.pop(sid, None)
+            return
+
+        await progress_msg.edit_text("📤 Отправляю файл...")
+
+        await send_local_file(
+            callback.message.chat.id, file_path, title, cat_label,
+        )
+
+        await progress_msg.delete()
+
+    except yt_dlp.utils.DownloadError as e:
+        log.warning("Retry download error for session %s: %s", sid, e)
+        retry_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔄 Повторить скачивание",
+                callback_data=RetryCallback(
+                    session=sid, fmt=fmt_id, remove=1 if sponsorblock else 0,
+                ).pack(),
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data=CancelCallback(session=sid).pack(),
+            )],
+        ])
+        err_short = str(e)[:200]
+        try:
+            await progress_msg.edit_text(
+                f"❌ Ошибка скачивания:\n<code>{err_short}</code>\n\n"
+                "Нажми «Повторить» — скачивание продолжится с места остановки.",
+                reply_markup=retry_kb,
+            )
+        except Exception:
+            pass
+        return
+    except Exception as e:
+        log.exception("Retry error for session %s", sid)
+        retry_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔄 Повторить скачивание",
+                callback_data=RetryCallback(
+                    session=sid, fmt=fmt_id, remove=1 if sponsorblock else 0,
+                ).pack(),
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data=CancelCallback(session=sid).pack(),
+            )],
+        ])
+        err_short = str(e)[:200]
+        try:
+            await progress_msg.edit_text(
+                f"❌ Произошла ошибка:\n<code>{err_short}</code>\n\n"
+                "Нажми «Повторить» для возобновления.",
+                reply_markup=retry_kb,
+            )
+        except Exception:
+            pass
+        return
     finally:
         user_downloads[user_id] = max(0, user_downloads.get(user_id, 1) - 1)
         if sid not in web_files:
