@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import requests as sync_requests
+import json
 import yt_dlp
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -237,7 +237,7 @@ def download_media(
     """Download media file (blocking). Returns path to downloaded file."""
     out_dir = DOWNLOAD_DIR / session_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_template = str(out_dir / "%(title).80s.%(ext)s")
+    out_template = str(out_dir / "%(id)s.%(ext)s")
 
     fmt = f"{format_id}+bestaudio" if is_video_only else format_id
 
@@ -319,10 +319,10 @@ async def safe_edit(msg: Message, text: str) -> None:
         pass
 
 
-def _send_file_sync(
+async def send_local_file(
     chat_id: int, file_path: Path, title: str, file_type: str,
 ) -> None:
-    """Send file to Telegram via multipart upload (blocking, runs in executor)."""
+    """Send file to Telegram via curl (streams from disk, no RAM buffering)."""
     method_map = {
         "audio_only": "sendAudio",
         "video_audio": "sendVideo",
@@ -341,35 +341,34 @@ def _send_file_sync(
     file_size = file_path.stat().st_size
     log.info("Sending file: %s (%s bytes) via %s", file_path, file_size, method)
 
-    form_data = {"chat_id": str(chat_id)}
+    cmd = [
+        "curl", "-s", "-X", "POST", url,
+        "-F", f"chat_id={chat_id}",
+        "-F", f"{field}=@{file_path}",
+    ]
     if method == "sendVideo":
-        form_data["caption"] = title
-        form_data["supports_streaming"] = "true"
+        cmd.extend(["-F", f"caption={title}", "-F", "supports_streaming=true"])
     elif method == "sendAudio":
-        form_data["title"] = title
+        cmd.extend(["-F", f"title={title}"])
     else:
-        form_data["caption"] = title
+        cmd.extend(["-F", f"caption={title}"])
 
-    with open(file_path, "rb") as f:
-        files = {field: (file_path.name, f, "application/octet-stream")}
-        resp = sync_requests.post(url, data=form_data, files=files, timeout=600)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
 
-    result = resp.json()
-    log.info("Bot API response: ok=%s, status=%s", result.get("ok"), resp.status_code)
+    if proc.returncode != 0:
+        raise RuntimeError(f"curl failed (code {proc.returncode}): {stderr.decode()}")
+
+    result = json.loads(stdout)
+    log.info("Bot API response: ok=%s", result.get("ok"))
     if not result.get("ok"):
         raise RuntimeError(
             f"Telegram API error: {result.get('description', result)}"
         )
-
-
-async def send_local_file(
-    chat_id: int, file_path: Path, title: str, file_type: str,
-) -> None:
-    """Send file to Telegram (async wrapper)."""
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(
-        executor, _send_file_sync, chat_id, file_path, title, file_type,
-    )
 
 
 # ---------------------------------------------------------------------------

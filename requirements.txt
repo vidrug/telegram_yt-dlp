@@ -1,4 +1,3 @@
 aiogram>=3.25.0,<4.0
 yt-dlp
 aiofiles
-requests
