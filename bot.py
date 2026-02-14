@@ -12,6 +12,7 @@ import yt_dlp
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.filters.callback_data import CallbackData
@@ -47,7 +48,11 @@ executor = ThreadPoolExecutor(max_workers=4)
 # Bot init (local API)
 # ---------------------------------------------------------------------------
 session = AiohttpSession(api=TelegramAPIServer.from_base(API_URL, is_local=True))
-bot = Bot(token=BOT_TOKEN, session=session, parse_mode=ParseMode.HTML)
+bot = Bot(
+    token=BOT_TOKEN,
+    session=session,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+)
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
