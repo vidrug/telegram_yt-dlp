@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import aiohttp
+import requests as sync_requests
 import yt_dlp
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -319,10 +319,10 @@ async def safe_edit(msg: Message, text: str) -> None:
         pass
 
 
-async def send_local_file(
+def _send_file_sync(
     chat_id: int, file_path: Path, title: str, file_type: str,
 ) -> None:
-    """Send file to Telegram via multipart upload to local Bot API."""
+    """Send file to Telegram via multipart upload (blocking, runs in executor)."""
     method_map = {
         "audio_only": "sendAudio",
         "video_audio": "sendVideo",
@@ -338,35 +338,38 @@ async def send_local_file(
     }
     field = field_map[method]
 
-    log.info("Sending file: %s (%s bytes) via %s", file_path, file_path.stat().st_size, method)
+    file_size = file_path.stat().st_size
+    log.info("Sending file: %s (%s bytes) via %s", file_path, file_size, method)
 
-    file_data = file_path.read_bytes()
-
-    data = aiohttp.FormData()
-    data.add_field("chat_id", str(chat_id))
-    data.add_field(
-        field,
-        file_data,
-        filename=file_path.name,
-        content_type="application/octet-stream",
-    )
+    form_data = {"chat_id": str(chat_id)}
     if method == "sendVideo":
-        data.add_field("caption", title)
-        data.add_field("supports_streaming", "true")
+        form_data["caption"] = title
+        form_data["supports_streaming"] = "true"
     elif method == "sendAudio":
-        data.add_field("title", title)
+        form_data["title"] = title
     else:
-        data.add_field("caption", title)
+        form_data["caption"] = title
 
-    timeout = aiohttp.ClientTimeout(total=600)
-    async with aiohttp.ClientSession(timeout=timeout) as http:
-        async with http.post(url, data=data) as resp:
-            result = await resp.json()
-            log.info("Bot API response: ok=%s, status=%s", result.get("ok"), resp.status)
-            if not result.get("ok"):
-                raise RuntimeError(
-                    f"Telegram API error: {result.get('description', result)}"
-                )
+    with open(file_path, "rb") as f:
+        files = {field: (file_path.name, f, "application/octet-stream")}
+        resp = sync_requests.post(url, data=form_data, files=files, timeout=600)
+
+    result = resp.json()
+    log.info("Bot API response: ok=%s, status=%s", result.get("ok"), resp.status_code)
+    if not result.get("ok"):
+        raise RuntimeError(
+            f"Telegram API error: {result.get('description', result)}"
+        )
+
+
+async def send_local_file(
+    chat_id: int, file_path: Path, title: str, file_type: str,
+) -> None:
+    """Send file to Telegram (async wrapper)."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
+        executor, _send_file_sync, chat_id, file_path, title, file_type,
+    )
 
 
 # ---------------------------------------------------------------------------
