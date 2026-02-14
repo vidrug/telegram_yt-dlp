@@ -18,7 +18,6 @@ from aiogram.filters import CommandStart
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import (
     CallbackQuery,
-    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -574,27 +573,27 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
 
         await progress_msg.edit_text("📤 Отправляю файл...")
 
-        # Send via local API (file path as string)
-        input_file = FSInputFile(file_path)
+        # Send via local API — pass absolute path as string
+        local_path = str(file_path)
         title = s.get("title", "video")
 
         if cat_label == "audio_only":
             await bot.send_audio(
                 chat_id=callback.message.chat.id,
-                audio=input_file,
+                audio=local_path,
                 title=title,
             )
         elif cat_label in ("video_audio", "video_only"):
             await bot.send_video(
                 chat_id=callback.message.chat.id,
-                video=input_file,
+                video=local_path,
                 caption=title,
                 supports_streaming=True,
             )
         else:
             await bot.send_document(
                 chat_id=callback.message.chat.id,
-                document=input_file,
+                document=local_path,
                 caption=title,
             )
 
