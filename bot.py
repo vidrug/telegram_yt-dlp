@@ -573,8 +573,8 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
 
         await progress_msg.edit_text("📤 Отправляю файл...")
 
-        # Send via local API — pass absolute path as string
-        local_path = str(file_path)
+        # Send via local API — file:// URI for local Bot API server
+        local_path = file_path.as_uri()
         title = s.get("title", "video")
 
         if cat_label == "audio_only":
