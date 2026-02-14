@@ -81,6 +81,12 @@ class CancelCallback(CallbackData, prefix="c"):
     session: str
 
 
+class SponsorBlockCallback(CallbackData, prefix="sb"):
+    session: str
+    fmt: str
+    remove: int  # 1 = yes, 0 = no
+
+
 # ---------------------------------------------------------------------------
 # Format helpers
 # ---------------------------------------------------------------------------
@@ -224,6 +230,7 @@ def download_media(
     format_id: str,
     session_id: str,
     is_video_only: bool,
+    sponsorblock: bool,
     loop: asyncio.AbstractEventLoop,
     progress_msg: Message,
 ) -> Path:
@@ -272,6 +279,16 @@ def download_media(
         "no_warnings": True,
         "progress_hooks": [progress_hook],
     }
+    if sponsorblock:
+        ydl_opts["sponsorblock_remove"] = {"all"}
+        ydl_opts["postprocessors"] = [{
+            "key": "SponsorBlock",
+            "categories": ["all"],
+            "when": "after_filter",
+        }, {
+            "key": "ModifyChapters",
+            "remove_sponsor_segments": ["all"],
+        }]
     # Remove None values
     ydl_opts = {k: v for k, v in ydl_opts.items() if v is not None}
 
@@ -437,6 +454,60 @@ async def handle_format_select(callback: CallbackQuery, callback_data: FormatCal
         await callback.answer("🚫 Это не твой запрос.", show_alert=True)
         return
 
+    # Find selected format for label
+    selected_format = None
+    for fmts in s["groups"].values():
+        for f in fmts:
+            if f["format_id"] == fmt_id:
+                selected_format = f
+                break
+        if selected_format:
+            break
+
+    if not selected_format:
+        await callback.answer("❌ Формат не найден.", show_alert=True)
+        return
+
+    await callback.answer()
+
+    label = format_button_label(selected_format)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Да, убрать рекламу",
+                callback_data=SponsorBlockCallback(session=sid, fmt=fmt_id, remove=1).pack(),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="⏩ Нет, скачать как есть",
+                callback_data=SponsorBlockCallback(session=sid, fmt=fmt_id, remove=0).pack(),
+            ),
+        ],
+    ])
+
+    await callback.message.edit_text(
+        f"Выбран формат: <b>{label}</b>\n\n"
+        "🔇 Убрать рекламные вставки (SponsorBlock)?",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(SponsorBlockCallback.filter())
+async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlockCallback) -> None:
+    sid = callback_data.session
+    fmt_id = callback_data.fmt
+    sponsorblock = callback_data.remove == 1
+    s = sessions.get(sid)
+    if not s:
+        await callback.answer("⏰ Сессия истекла. Отправь ссылку заново.", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    if s["user_id"] != user_id:
+        await callback.answer("🚫 Это не твой запрос.", show_alert=True)
+        return
+
     current = user_downloads.get(user_id, 0)
     if current >= MAX_CONCURRENT_PER_USER:
         await callback.answer(
@@ -467,9 +538,10 @@ async def handle_format_select(callback: CallbackQuery, callback_data: FormatCal
     cat_label = classify_format(selected_format)
     if is_video_only:
         label += " (+ best audio)"
+    sb_text = " | SponsorBlock ✅" if sponsorblock else ""
 
     progress_msg = await callback.message.edit_text(
-        f"⬇️ Скачиваю: {label}\n\nПодготовка..."
+        f"⬇️ Скачиваю: {label}{sb_text}\n\nПодготовка..."
     )
 
     user_downloads[user_id] = current + 1
@@ -483,6 +555,7 @@ async def handle_format_select(callback: CallbackQuery, callback_data: FormatCal
             fmt_id,
             sid,
             is_video_only,
+            sponsorblock,
             loop,
             progress_msg,
         )
