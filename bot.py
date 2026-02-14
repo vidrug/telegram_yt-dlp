@@ -338,11 +338,15 @@ async def send_local_file(
     }
     field = field_map[method]
 
+    log.info("Sending file: %s (%s bytes) via %s", file_path, file_path.stat().st_size, method)
+
+    file_data = file_path.read_bytes()
+
     data = aiohttp.FormData()
     data.add_field("chat_id", str(chat_id))
     data.add_field(
         field,
-        open(file_path, "rb"),
+        file_data,
         filename=file_path.name,
         content_type="application/octet-stream",
     )
@@ -358,6 +362,7 @@ async def send_local_file(
     async with aiohttp.ClientSession(timeout=timeout) as http:
         async with http.post(url, data=data) as resp:
             result = await resp.json()
+            log.info("Bot API response: ok=%s, status=%s", result.get("ok"), resp.status)
             if not result.get("ok"):
                 raise RuntimeError(
                     f"Telegram API error: {result.get('description', result)}"
