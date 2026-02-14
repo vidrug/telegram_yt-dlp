@@ -322,7 +322,7 @@ async def safe_edit(msg: Message, text: str) -> None:
 async def send_local_file(
     chat_id: int, file_path: Path, title: str, file_type: str,
 ) -> None:
-    """Send file to Telegram via direct JSON request to local Bot API."""
+    """Send file to Telegram via multipart upload to local Bot API."""
     method_map = {
         "audio_only": "sendAudio",
         "video_audio": "sendVideo",
@@ -338,21 +338,25 @@ async def send_local_file(
     }
     field = field_map[method]
 
-    payload = {
-        "chat_id": chat_id,
-        field: str(file_path),
-    }
+    data = aiohttp.FormData()
+    data.add_field("chat_id", str(chat_id))
+    data.add_field(
+        field,
+        open(file_path, "rb"),
+        filename=file_path.name,
+        content_type="application/octet-stream",
+    )
     if method == "sendVideo":
-        payload["caption"] = title
-        payload["supports_streaming"] = True
+        data.add_field("caption", title)
+        data.add_field("supports_streaming", "true")
     elif method == "sendAudio":
-        payload["title"] = title
+        data.add_field("title", title)
     else:
-        payload["caption"] = title
+        data.add_field("caption", title)
 
     timeout = aiohttp.ClientTimeout(total=600)
     async with aiohttp.ClientSession(timeout=timeout) as http:
-        async with http.post(url, json=payload) as resp:
+        async with http.post(url, data=data) as resp:
             result = await resp.json()
             if not result.get("ok"):
                 raise RuntimeError(
