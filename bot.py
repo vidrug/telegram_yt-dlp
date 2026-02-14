@@ -333,6 +333,7 @@ def download_media(
         "continuedl": True,  # resume partial .part files
         "retries": 3,  # retry on transient errors
         "fragment_retries": 5,  # retry individual fragments (DASH/HLS)
+        "concurrent_fragment_downloads": 4,  # download 4 fragments in parallel
     }
     if sponsorblock:
         ydl_opts["sponsorblock_remove"] = {"all"}
@@ -430,8 +431,11 @@ async def send_local_file(
 # Web server for files > 2 GB
 # ---------------------------------------------------------------------------
 
+CHUNK_SIZE = 64 * 1024 * 1024  # 64 MB
+
+
 async def handle_download(request: web.Request) -> web.StreamResponse:
-    """Serve a file for download."""
+    """Serve a file for download with Range support."""
     sid = request.match_info["session_id"]
     entry = web_files.get(sid)
     if not entry:
@@ -443,18 +447,50 @@ async def handle_download(request: web.Request) -> web.StreamResponse:
         raise web.HTTPNotFound(text="File not found or link expired.")
 
     filename = entry["filename"]
-    response = web.StreamResponse()
-    response.content_type = "application/octet-stream"
+    file_size = file_path.stat().st_size
     encoded = quote(filename)
-    response.headers["Content-Disposition"] = (
-        f"attachment; filename*=UTF-8''{encoded}"
-    )
-    response.content_length = file_path.stat().st_size
+    disposition = f"attachment; filename*=UTF-8''{encoded}"
+
+    # Parse Range header
+    range_header = request.headers.get("Range")
+    start = 0
+    end = file_size - 1
+
+    if range_header and range_header.startswith("bytes="):
+        range_spec = range_header[6:]
+        parts = range_spec.split("-", 1)
+        if parts[0]:
+            start = int(parts[0])
+        if parts[1]:
+            end = int(parts[1])
+        end = min(end, file_size - 1)
+
+        if start >= file_size or start > end:
+            return web.Response(
+                status=416,
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+
+        response = web.StreamResponse(status=206)
+        response.headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+    else:
+        response = web.StreamResponse(status=200)
+
+    response.content_type = "application/octet-stream"
+    response.headers["Content-Disposition"] = disposition
+    response.headers["Accept-Ranges"] = "bytes"
+    response.content_length = end - start + 1
     await response.prepare(request)
 
     with open(file_path, "rb") as f:
-        while chunk := f.read(1024 * 1024):  # 1 MB chunks
+        f.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = f.read(min(CHUNK_SIZE, remaining))
+            if not chunk:
+                break
             await response.write(chunk)
+            remaining -= len(chunk)
 
     return response
 
