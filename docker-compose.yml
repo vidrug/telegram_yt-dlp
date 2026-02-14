@@ -12,10 +12,13 @@ services:
 
   bot:
     build: .
+    ports:
+      - "8080:8080"
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
       TELEGRAM_API_URL: http://telegram-bot-api:8081
       SHARED_DIR: /shared
+      EXTERNAL_URL: ${EXTERNAL_URL}
     volumes:
       - shared:/shared
     depends_on:

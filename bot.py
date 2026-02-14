@@ -9,7 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import json
+from urllib.parse import quote
+
 import yt_dlp
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
@@ -32,11 +35,14 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 API_URL = os.environ.get("TELEGRAM_API_URL", "http://telegram-bot-api:8081")
+EXTERNAL_URL = os.environ.get("EXTERNAL_URL", "http://localhost:8080").rstrip("/")
 SHARED_DIR = Path(os.environ.get("SHARED_DIR", "/shared"))
 DOWNLOAD_DIR = SHARED_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
+WEB_FILE_TTL = 8 * 3600  # 8 hours
+WEB_PORT = 8080
 FORMATS_PER_PAGE = 8
 SESSION_TTL = 30 * 60  # 30 min
 MAX_CONCURRENT_PER_USER = 2
@@ -62,6 +68,7 @@ dp.include_router(router)
 # ---------------------------------------------------------------------------
 sessions: dict[str, dict] = {}  # session_id -> {url, formats, title, created, user_id}
 user_downloads: dict[int, int] = {}  # user_id -> active download count
+web_files: dict[str, dict] = {}  # session_id -> {path, created, filename}
 
 # ---------------------------------------------------------------------------
 # CallbackData
@@ -411,6 +418,45 @@ async def send_local_file(
 
 
 # ---------------------------------------------------------------------------
+# Web server for files > 2 GB
+# ---------------------------------------------------------------------------
+
+async def handle_download(request: web.Request) -> web.StreamResponse:
+    """Serve a file for download."""
+    sid = request.match_info["session_id"]
+    entry = web_files.get(sid)
+    if not entry:
+        raise web.HTTPNotFound(text="File not found or link expired.")
+
+    file_path = entry["path"]
+    if not file_path.exists():
+        web_files.pop(sid, None)
+        raise web.HTTPNotFound(text="File not found or link expired.")
+
+    filename = entry["filename"]
+    response = web.StreamResponse()
+    response.content_type = "application/octet-stream"
+    encoded = quote(filename)
+    response.headers["Content-Disposition"] = (
+        f"attachment; filename*=UTF-8''{encoded}"
+    )
+    response.content_length = file_path.stat().st_size
+    await response.prepare(request)
+
+    with open(file_path, "rb") as f:
+        while chunk := f.read(1024 * 1024):  # 1 MB chunks
+            await response.write(chunk)
+
+    return response
+
+
+def create_web_app() -> web.Application:
+    app = web.Application()
+    app.router.add_get("/dl/{session_id}/{filename}", handle_download)
+    return app
+
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 
@@ -424,15 +470,27 @@ def cleanup_session_files(session_id: str) -> None:
 
 
 async def periodic_cleanup() -> None:
-    """Remove orphaned download dirs older than 1 hour."""
+    """Remove orphaned download dirs and expired web files."""
     while True:
-        await asyncio.sleep(3600)
+        await asyncio.sleep(600)
         try:
             now = time.time()
+            # Clean expired web files (8 hours)
+            expired_web = [
+                sid for sid, e in web_files.items()
+                if now - e["created"] > WEB_FILE_TTL
+            ]
+            for sid in expired_web:
+                web_files.pop(sid, None)
+                cleanup_session_files(sid)
+                log.info("Cleaned up expired web file: %s", sid)
+
+            # Clean orphaned dirs (1 hour, skip active web files)
             for d in DOWNLOAD_DIR.iterdir():
-                if d.is_dir() and (now - d.stat().st_mtime > 3600):
-                    shutil.rmtree(d, ignore_errors=True)
-                    log.info("Cleaned up orphaned dir: %s", d.name)
+                if d.is_dir() and d.name not in web_files:
+                    if now - d.stat().st_mtime > 3600:
+                        shutil.rmtree(d, ignore_errors=True)
+                        log.info("Cleaned up orphaned dir: %s", d.name)
         except Exception as e:
             log.error("periodic_cleanup error: %s", e)
 
@@ -752,16 +810,30 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
             return
 
         file_size = file_path.stat().st_size
+        title = s.get("title", "video")
+
         if file_size > MAX_FILE_SIZE:
+            # File too large for Telegram — serve via web
+            filename = f"{title}.{file_path.suffix.lstrip('.')}"
+            web_files[sid] = {
+                "path": file_path,
+                "created": time.time(),
+                "filename": filename,
+            }
+            encoded_name = quote(filename)
+            link = f"{EXTERNAL_URL}/dl/{sid}/{encoded_name}"
             await progress_msg.edit_text(
-                f"❌ Файл слишком большой: {format_filesize(file_size)} (макс. 2 ГБ)."
+                f"📦 Файл слишком большой для Telegram "
+                f"({format_filesize(file_size)}).\n\n"
+                f"⬇️ <a href=\"{link}\">Скачать файл</a>\n\n"
+                f"Ссылка действует 8 часов.",
             )
-            cleanup_session_files(sid)
+            # Don't cleanup — file served via web, cleaned by periodic_cleanup
+            sessions.pop(sid, None)
             return
 
         await progress_msg.edit_text("📤 Отправляю файл...")
 
-        title = s.get("title", "video")
         await send_local_file(
             callback.message.chat.id, file_path, title, cat_label,
         )
@@ -775,7 +847,8 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
         await safe_edit(progress_msg, f"❌ Произошла ошибка:\n<code>{e}</code>")
     finally:
         user_downloads[user_id] = max(0, user_downloads.get(user_id, 1) - 1)
-        cleanup_session_files(sid)
+        if sid not in web_files:
+            cleanup_session_files(sid)
         sessions.pop(sid, None)
 
 
@@ -802,15 +875,35 @@ async def on_startup() -> None:
 
 async def on_shutdown() -> None:
     log.info("Bot shutting down, cleaning downloads...")
+    # Don't remove web files on shutdown — they should persist
     for sid in list(sessions):
-        cleanup_session_files(sid)
+        if sid not in web_files:
+            cleanup_session_files(sid)
     sessions.clear()
 
 
-def main() -> None:
+async def run_all() -> None:
+    """Run bot polling and web server concurrently."""
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
-    dp.run_polling(bot)
+
+    # Web server
+    app = create_web_app()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", WEB_PORT)
+    await site.start()
+    log.info("Web server started on port %s, external URL: %s", WEB_PORT, EXTERNAL_URL)
+
+    # Bot polling
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await runner.cleanup()
+
+
+def main() -> None:
+    asyncio.run(run_all())
 
 
 if __name__ == "__main__":
