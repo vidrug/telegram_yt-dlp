@@ -8,6 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import aiohttp
 import yt_dlp
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -318,6 +319,47 @@ async def safe_edit(msg: Message, text: str) -> None:
         pass
 
 
+async def send_local_file(
+    chat_id: int, file_path: Path, title: str, file_type: str,
+) -> None:
+    """Send file to Telegram via direct JSON request to local Bot API."""
+    method_map = {
+        "audio_only": "sendAudio",
+        "video_audio": "sendVideo",
+        "video_only": "sendVideo",
+    }
+    method = method_map.get(file_type, "sendDocument")
+    url = f"{API_URL}/bot{BOT_TOKEN}/{method}"
+
+    field_map = {
+        "sendVideo": "video",
+        "sendAudio": "audio",
+        "sendDocument": "document",
+    }
+    field = field_map[method]
+
+    payload = {
+        "chat_id": chat_id,
+        field: str(file_path),
+    }
+    if method == "sendVideo":
+        payload["caption"] = title
+        payload["supports_streaming"] = True
+    elif method == "sendAudio":
+        payload["title"] = title
+    else:
+        payload["caption"] = title
+
+    timeout = aiohttp.ClientTimeout(total=600)
+    async with aiohttp.ClientSession(timeout=timeout) as http:
+        async with http.post(url, json=payload) as resp:
+            result = await resp.json()
+            if not result.get("ok"):
+                raise RuntimeError(
+                    f"Telegram API error: {result.get('description', result)}"
+                )
+
+
 # ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
@@ -573,29 +615,10 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
 
         await progress_msg.edit_text("📤 Отправляю файл...")
 
-        # Send via local API — file:// URI for local Bot API server
-        local_path = file_path.as_uri()
         title = s.get("title", "video")
-
-        if cat_label == "audio_only":
-            await bot.send_audio(
-                chat_id=callback.message.chat.id,
-                audio=local_path,
-                title=title,
-            )
-        elif cat_label in ("video_audio", "video_only"):
-            await bot.send_video(
-                chat_id=callback.message.chat.id,
-                video=local_path,
-                caption=title,
-                supports_streaming=True,
-            )
-        else:
-            await bot.send_document(
-                chat_id=callback.message.chat.id,
-                document=local_path,
-                caption=title,
-            )
+        await send_local_file(
+            callback.message.chat.id, file_path, title, cat_label,
+        )
 
         await progress_msg.delete()
 
