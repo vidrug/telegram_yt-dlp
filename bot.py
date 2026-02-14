@@ -461,7 +461,7 @@ async def handle_download(request: web.Request) -> web.StreamResponse:
 
 def create_web_app() -> web.Application:
     app = web.Application()
-    app.router.add_get("/dl/{session_id}/{filename}", handle_download)
+    app.router.add_get("/dl/{session_id}", handle_download)
     return app
 
 
@@ -839,8 +839,7 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
                 "created": time.time(),
                 "filename": filename,
             }
-            encoded_name = quote(filename)
-            link = f"{EXTERNAL_URL}/dl/{sid}/{encoded_name}"
+            link = f"{EXTERNAL_URL}/dl/{sid}"
             await progress_msg.edit_text(
                 f"📦 Файл слишком большой для Telegram "
                 f"({format_filesize(file_size)}).\n\n"
@@ -997,8 +996,7 @@ async def handle_retry(callback: CallbackQuery, callback_data: RetryCallback) ->
                 "created": time.time(),
                 "filename": filename,
             }
-            encoded_name = quote(filename)
-            link = f"{EXTERNAL_URL}/dl/{sid}/{encoded_name}"
+            link = f"{EXTERNAL_URL}/dl/{sid}"
             await progress_msg.edit_text(
                 f"📦 Файл слишком большой для Telegram "
                 f"({format_filesize(file_size)}).\n\n"
