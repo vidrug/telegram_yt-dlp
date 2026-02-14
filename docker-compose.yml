@@ -8,7 +8,7 @@ services:
     volumes:
       - shared:/var/lib/telegram-bot-api
     healthcheck:
-      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/8081' || exit 1"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081"]
       interval: 5s
       timeout: 3s
       retries: 10
