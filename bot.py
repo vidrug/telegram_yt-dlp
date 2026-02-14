@@ -87,6 +87,10 @@ class SponsorBlockCallback(CallbackData, prefix="sb"):
     remove: int  # 1 = yes, 0 = no
 
 
+class RawFormatsCallback(CallbackData, prefix="rf"):
+    session: str
+
+
 # ---------------------------------------------------------------------------
 # Format helpers
 # ---------------------------------------------------------------------------
@@ -167,6 +171,35 @@ def filter_and_group(info: dict) -> dict[str, list[dict]]:
     return groups
 
 
+def build_raw_format_table(formats: list[dict]) -> str:
+    """Build a text table of all formats similar to yt-dlp -F output."""
+    lines = []
+    lines.append(f"{'ID':<6}{'EXT':<6}{'RES':<12}{'FPS':<5}{'VCODEC':<10}{'ACODEC':<8}{'SIZE':<9}{'NOTE'}")
+    lines.append("─" * 70)
+    for f in formats:
+        fid = f.get("format_id", "?")
+        ext = f.get("ext", "?")
+        res = f.get("resolution") or f.get("format_note") or "?"
+        fps = f.get("fps") or ""
+        vcodec = f.get("vcodec") or "none"
+        if vcodec == "none":
+            vcodec = "-"
+        else:
+            vcodec = vcodec.split(".")[0][:8]
+        acodec = f.get("acodec") or "none"
+        if acodec == "none":
+            acodec = "-"
+        else:
+            acodec = acodec.split(".")[0][:6]
+        size = format_filesize(f.get("filesize") or f.get("filesize_approx"))
+        note = f.get("format_note") or ""
+        fps_s = str(int(fps)) if fps else ""
+        lines.append(
+            f"{fid:<6}{ext:<6}{res:<12}{fps_s:<5}{vcodec:<10}{acodec:<8}{size:<9}{note}"
+        )
+    return "\n".join(lines)
+
+
 def build_format_keyboard(
     session_id: str, groups: dict[str, list[dict]], page: int = 0
 ) -> InlineKeyboardMarkup:
@@ -213,10 +246,16 @@ def build_format_keyboard(
     if nav:
         rows.append(nav)
 
-    rows.append([InlineKeyboardButton(
-        text="❌ Отмена",
-        callback_data=CancelCallback(session=session_id).pack(),
-    )])
+    rows.append([
+        InlineKeyboardButton(
+            text="📋 Все форматы",
+            callback_data=RawFormatsCallback(session=session_id).pack(),
+        ),
+        InlineKeyboardButton(
+            text="❌ Отмена",
+            callback_data=CancelCallback(session=session_id).pack(),
+        ),
+    ])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -447,6 +486,7 @@ async def handle_url(message: Message) -> None:
     sessions[session_id] = {
         "url": url,
         "groups": groups,
+        "raw_formats": info.get("formats") or [],
         "title": info.get("title", "video"),
         "created": time.time(),
         "user_id": message.from_user.id,
@@ -490,6 +530,96 @@ async def handle_cancel(callback: CallbackQuery, callback_data: CancelCallback) 
     cleanup_session_files(sid)
     await callback.message.edit_text("❌ Отменено.")
     await callback.answer()
+
+
+@router.callback_query(RawFormatsCallback.filter())
+async def handle_raw_formats(callback: CallbackQuery, callback_data: RawFormatsCallback) -> None:
+    sid = callback_data.session
+    s = sessions.get(sid)
+    if not s:
+        await callback.answer("⏰ Сессия истекла. Отправь ссылку заново.", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    if s["user_id"] != user_id:
+        await callback.answer("🚫 Это не твой запрос.", show_alert=True)
+        return
+
+    await callback.answer()
+
+    raw = s.get("raw_formats", [])
+    table = build_raw_format_table(raw)
+
+    # Split into chunks of max 4000 chars (Telegram limit ~4096)
+    chunks = []
+    current = ""
+    for line in table.split("\n"):
+        if len(current) + len(line) + 1 > 3900:
+            chunks.append(current)
+            current = line
+        else:
+            current = current + "\n" + line if current else line
+    if current:
+        chunks.append(current)
+
+    for chunk in chunks:
+        await bot.send_message(
+            chat_id=callback.message.chat.id,
+            text=f"<pre>{chunk}</pre>",
+        )
+
+    s["awaiting_format"] = True
+    await bot.send_message(
+        chat_id=callback.message.chat.id,
+        text=(
+            "Введи формат для скачивания, например:\n"
+            "<code>251</code> — один формат\n"
+            "<code>315+251</code> — видео + аудио\n"
+            "<code>bestvideo+bestaudio</code> — лучшее качество\n\n"
+            "Или отправь новую ссылку для отмены."
+        ),
+    )
+
+
+@router.message(F.text.regexp(r"^[\w+]+$"))
+async def handle_custom_format(message: Message) -> None:
+    """Handle manual format input like '315+251'."""
+    user_id = message.from_user.id
+    # Find session awaiting format input for this user
+    sid = None
+    s = None
+    for _sid, _s in sessions.items():
+        if _s.get("user_id") == user_id and _s.get("awaiting_format"):
+            sid = _sid
+            s = _s
+            break
+
+    if not s:
+        return  # Not awaiting format input, skip
+
+    s["awaiting_format"] = False
+    fmt_input = message.text.strip()
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Да, убрать рекламу",
+                callback_data=SponsorBlockCallback(session=sid, fmt=fmt_input, remove=1).pack(),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="⏩ Нет, скачать как есть",
+                callback_data=SponsorBlockCallback(session=sid, fmt=fmt_input, remove=0).pack(),
+            ),
+        ],
+    ])
+
+    await message.answer(
+        f"Формат: <code>{fmt_input}</code>\n\n"
+        "🔇 Убрать рекламные вставки (SponsorBlock)?",
+        reply_markup=kb,
+    )
 
 
 @router.callback_query(FormatCallback.filter())
@@ -570,26 +700,31 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
 
     # Determine format category
     is_video_only = False
+    is_custom = "+" in fmt_id or not fmt_id.isdigit()
     selected_format = None
-    for cat, fmts in s["groups"].items():
-        for f in fmts:
-            if f["format_id"] == fmt_id:
-                selected_format = f
-                is_video_only = cat == "video_only"
-                break
-        if selected_format:
-            break
 
-    if not selected_format:
-        await callback.answer("❌ Формат не найден.", show_alert=True)
-        return
+    if not is_custom:
+        for cat, fmts in s["groups"].items():
+            for f in fmts:
+                if f["format_id"] == fmt_id:
+                    selected_format = f
+                    is_video_only = cat == "video_only"
+                    break
+            if selected_format:
+                break
 
     await callback.answer()
 
-    label = format_button_label(selected_format)
-    cat_label = classify_format(selected_format)
-    if is_video_only:
-        label += " (+ best audio)"
+    if selected_format:
+        label = format_button_label(selected_format)
+        cat_label = classify_format(selected_format)
+        if is_video_only:
+            label += " (+ best audio)"
+    else:
+        # Custom format from raw input
+        label = fmt_id
+        cat_label = "video_audio"  # assume merged for custom formats
+
     sb_text = " | SponsorBlock ✅" if sponsorblock else ""
 
     progress_msg = await callback.message.edit_text(
