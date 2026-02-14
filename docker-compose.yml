@@ -7,12 +7,7 @@ services:
       TELEGRAM_LOCAL: "1"
     volumes:
       - shared:/var/lib/telegram-bot-api
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8081"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
+    restart: unless-stopped
 
   bot:
     build: .
@@ -23,8 +18,7 @@ services:
     volumes:
       - shared:/shared
     depends_on:
-      telegram-bot-api:
-        condition: service_healthy
+      - telegram-bot-api
     restart: unless-stopped
 
 volumes:
