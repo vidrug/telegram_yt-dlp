@@ -11,7 +11,7 @@ from bot.state import bot, dp, sessions, web_files
 from bot.web import create_web_app
 
 # Import handlers to register them on the router
-import bot.handlers  # noqa: F401
+from bot import handlers  # noqa: F401
 
 
 async def on_startup() -> None:
