@@ -138,6 +138,16 @@ def build_format_keyboard(
     page_items = all_formats[start:end]
 
     rows: list[list[InlineKeyboardButton]] = []
+
+    # "Best quality" button on first page only
+    if page == 0:
+        rows.append([InlineKeyboardButton(
+            text="⭐ Лучшее качество (bestvideo+bestaudio)",
+            callback_data=FormatCallback(
+                session=session_id, fmt="bestvideo+bestaudio",
+            ).pack(),
+        )])
+
     for kind, item in page_items:
         if kind == "section":
             rows.append([InlineKeyboardButton(text=f"— {item} —", callback_data="noop")])

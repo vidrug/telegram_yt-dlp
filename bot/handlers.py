@@ -228,12 +228,12 @@ async def handle_format_select(callback: CallbackQuery, callback_data: FormatCal
             break
 
     if not selected_format:
-        await callback.answer("❌ Формат не найден.", show_alert=True)
-        return
+        # Custom format string (e.g. bestvideo+bestaudio)
+        label = fmt_id
+    else:
+        label = format_button_label(selected_format)
 
     await callback.answer()
-
-    label = format_button_label(selected_format)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
@@ -336,7 +336,8 @@ async def _execute_download(
                 "created": time.time(),
                 "filename": filename,
             }
-            link = f"{EXTERNAL_URL}/dl/{sid}"
+            ext = file_path.suffix  # e.g. ".mp4"
+            link = f"{EXTERNAL_URL}/dl/{sid}{ext}"
             await progress_msg.edit_text(
                 f"📦 Файл слишком большой для Telegram "
                 f"({format_filesize(file_size)}).\n\n"

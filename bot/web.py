@@ -72,5 +72,5 @@ async def handle_download(request: web.Request) -> web.StreamResponse:
 
 def create_web_app() -> web.Application:
     app = web.Application()
-    app.router.add_get("/dl/{session_id}", handle_download)
+    app.router.add_get("/dl/{session_id}{ext:.*}", handle_download)
     return app
