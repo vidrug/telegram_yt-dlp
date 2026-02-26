@@ -23,6 +23,10 @@ def classify_format(f: dict) -> str | None:
         return "video_only"
     if has_audio:
         return "audio_only"
+    # Formats with no codec info but with a video extension (e.g. Instagram)
+    ext = f.get("ext", "")
+    if ext in ("mp4", "webm", "mkv", "mov", "avi", "flv"):
+        return "video_audio"
     return None
 
 
