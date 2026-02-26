@@ -148,28 +148,28 @@ def build_format_keyboard(
 
     # Quick quality buttons on first page only
     if page == 0:
+        all_video = sorted(
+            groups.get("video_audio", []) + groups.get("video_only", []),
+            key=lambda x: x.get("tbr") or 0, reverse=True,
+        )
+        best_label = f" — {format_button_label(all_video[0])}" if all_video else ""
         rows.append([InlineKeyboardButton(
-            text="⭐ Лучшее качество",
+            text=f"⭐ Лучшее{best_label}",
             callback_data=FormatCallback(
                 session=session_id, fmt="best",
             ).pack(),
         )])
-        va = groups.get("video_audio", [])
-        if len(va) >= 3:
-            mid = va[len(va) // 2]
+        if len(all_video) >= 3:
+            mid = all_video[len(all_video) // 2]
             rows.append([InlineKeyboardButton(
                 text=f"🔸 Среднее — {format_button_label(mid)}",
-                callback_data=FormatCallback(
-                    session=session_id, fmt=mid["format_id"],
-                ).pack(),
+                callback_data=FormatCallback(session=session_id, fmt=mid["format_id"]).pack(),
             )])
-        if len(va) >= 2:
-            low = va[-1]
+        if len(all_video) >= 2:
+            low = all_video[-1]
             rows.append([InlineKeyboardButton(
                 text=f"🔹 Низкое — {format_button_label(low)}",
-                callback_data=FormatCallback(
-                    session=session_id, fmt=low["format_id"],
-                ).pack(),
+                callback_data=FormatCallback(session=session_id, fmt=low["format_id"]).pack(),
             )])
 
     for kind, item in page_items:
