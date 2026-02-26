@@ -26,7 +26,12 @@ def download_media(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_template = str(out_dir / "%(id)s.%(ext)s")
 
-    fmt = f"{format_id}+bestaudio" if is_video_only else format_id
+    if format_id == "best":
+        fmt = "bestvideo*+bestaudio/best"
+    elif is_video_only:
+        fmt = f"{format_id}+bestaudio"
+    else:
+        fmt = format_id
 
     last_update = [0.0]
 

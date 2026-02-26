@@ -149,9 +149,9 @@ def build_format_keyboard(
     # "Best quality" button on first page only
     if page == 0:
         rows.append([InlineKeyboardButton(
-            text="⭐ Лучшее качество (bestvideo+bestaudio)",
+            text="⭐ Лучшее качество",
             callback_data=FormatCallback(
-                session=session_id, fmt="bestvideo+bestaudio",
+                session=session_id, fmt="best",
             ).pack(),
         )])
 
