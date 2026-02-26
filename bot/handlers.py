@@ -307,6 +307,7 @@ async def _execute_download(
     current = user_downloads.get(user_id, 0)
     user_downloads[user_id] = current + 1
     loop = asyncio.get_running_loop()
+    success = False
 
     try:
         file_path = await loop.run_in_executor(
@@ -345,6 +346,7 @@ async def _execute_download(
                 f"Ссылка действует 8 часов.",
             )
             sessions.pop(sid, None)
+            success = True
             return
 
         await progress_msg.edit_text("📤 Отправляю файл...")
@@ -354,6 +356,7 @@ async def _execute_download(
         )
 
         await progress_msg.delete()
+        success = True
 
     except yt_dlp.utils.DownloadError as e:
         log.warning("Download error for session %s: %s", sid, e)
@@ -385,11 +388,10 @@ async def _execute_download(
         return
     finally:
         user_downloads[user_id] = max(0, user_downloads.get(user_id, 1) - 1)
-        # Cleanup only on success or if session was consumed (web/send)
-        # On error we return early above, so this runs only on success path
-        if sid not in web_files:
-            cleanup_session_files(sid)
-        sessions.pop(sid, None)
+        if success:
+            if sid not in web_files:
+                cleanup_session_files(sid)
+            sessions.pop(sid, None)
 
 
 @router.callback_query(SponsorBlockCallback.filter())
