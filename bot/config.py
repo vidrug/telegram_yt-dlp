@@ -21,3 +21,5 @@ FORMATS_PER_PAGE = 8
 SESSION_TTL = 2 * 3600  # 2 hours
 MAX_CONCURRENT_PER_USER = 2
 PROGRESS_INTERVAL = 3  # seconds
+COOKIES_FILE = Path(os.environ.get("COOKIES_FILE", "/app/cookies.txt"))
+COOKIES_FILE = COOKIES_FILE if COOKIES_FILE.exists() else None

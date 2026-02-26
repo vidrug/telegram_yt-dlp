@@ -21,6 +21,7 @@ services:
       EXTERNAL_URL: ${EXTERNAL_URL}
     volumes:
       - shared:/shared
+      - ./cookies.txt:/app/cookies.txt:ro
     depends_on:
       - telegram-bot-api
     restart: unless-stopped

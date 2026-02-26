@@ -59,11 +59,14 @@ def format_button_label(f: dict) -> str:
 
 def extract_formats(url: str) -> dict:
     """Run yt-dlp extract_info (blocking)."""
+    from bot.config import COOKIES_FILE
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
     }
+    if COOKIES_FILE:
+        ydl_opts["cookiefile"] = str(COOKIES_FILE)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return info
@@ -79,7 +82,7 @@ def filter_and_group(info: dict) -> dict[str, list[dict]]:
     seen = set()
     for f in formats:
         fid = f.get("format_id")
-        if not fid or fid in seen:
+        if fid is None or fid in seen:
             continue
         cat = classify_format(f)
         if cat is None:

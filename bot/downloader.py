@@ -8,7 +8,7 @@ from pathlib import Path
 import yt_dlp
 from aiogram.types import Message
 
-from bot.config import API_URL, BOT_TOKEN, DOWNLOAD_DIR, PROGRESS_INTERVAL, log
+from bot.config import API_URL, BOT_TOKEN, COOKIES_FILE, DOWNLOAD_DIR, PROGRESS_INTERVAL, log
 from bot.formats import format_filesize
 
 
@@ -70,6 +70,8 @@ def download_media(
         "fragment_retries": 5,  # retry individual fragments (DASH/HLS)
         "concurrent_fragment_downloads": 4,  # download 4 fragments in parallel
     }
+    if COOKIES_FILE:
+        ydl_opts["cookiefile"] = str(COOKIES_FILE)
     if sponsorblock:
         ydl_opts["sponsorblock_remove"] = {"all"}
         ydl_opts["postprocessors"] = [{
