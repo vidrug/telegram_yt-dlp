@@ -14,7 +14,9 @@ CHUNK_SIZE = 64 * 1024 * 1024  # 64 MB
 
 async def handle_download(request: web.Request) -> web.StreamResponse:
     """Serve a file for download with Range support."""
-    sid = request.match_info["session_id"]
+    raw = request.match_info["session_id"]
+    # Strip file extension if present (e.g. "abc123.mp4" -> "abc123")
+    sid = raw.split(".")[0] if "." in raw else raw
     entry = web_files.get(sid)
     if not entry:
         raise web.HTTPNotFound(text="File not found or link expired.")
@@ -105,5 +107,5 @@ async def handle_download(request: web.Request) -> web.StreamResponse:
 
 def create_web_app() -> web.Application:
     app = web.Application()
-    app.router.add_get("/dl/{session_id}{ext:.*}", handle_download)
+    app.router.add_get("/dl/{session_id:.+}", handle_download)
     return app
