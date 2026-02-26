@@ -1,4 +1,4 @@
-"""Cleanup routines for sessions, download dirs, and web files."""
+"""Cleanup routines for sessions, download dirs, web files, and yt-dlp updates."""
 
 import asyncio
 import shutil
@@ -6,6 +6,8 @@ import time
 
 from bot.config import DOWNLOAD_DIR, SESSION_TTL, WEB_FILE_TTL, log
 from bot.state import sessions, web_files
+
+YT_DLP_UPDATE_INTERVAL = 24 * 3600  # 24 hours
 
 
 def cleanup_session_files(session_id: str) -> None:
@@ -61,3 +63,24 @@ async def session_cleanup() -> None:
             cleanup_session_files(sid)
         if expired:
             log.info("Cleaned up %d expired sessions", len(expired))
+
+
+async def periodic_ytdlp_update() -> None:
+    """Update yt-dlp every 24 hours to keep extractors fresh."""
+    while True:
+        await asyncio.sleep(YT_DLP_UPDATE_INTERVAL)
+        try:
+            log.info("Updating yt-dlp...")
+            proc = await asyncio.create_subprocess_exec(
+                "pip", "install", "-U", "yt-dlp",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            output = stdout.decode().strip()
+            if "Successfully installed" in output:
+                log.info("yt-dlp updated: %s", output.split("\n")[-1])
+            else:
+                log.info("yt-dlp already up to date")
+        except Exception as e:
+            log.error("yt-dlp update error: %s", e)

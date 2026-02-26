@@ -5,7 +5,7 @@ import asyncio
 from aiogram import Bot
 from aiohttp import web
 
-from bot.cleanup import cleanup_session_files, periodic_cleanup, session_cleanup
+from bot.cleanup import cleanup_session_files, periodic_cleanup, periodic_ytdlp_update, session_cleanup
 from bot.config import API_URL, BOT_TOKEN, WEB_PORT, EXTERNAL_URL, log
 from bot.state import bot, dp, sessions, web_files
 from bot.web import create_web_app
@@ -29,6 +29,7 @@ async def on_startup() -> None:
     await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(periodic_cleanup())
     asyncio.create_task(session_cleanup())
+    asyncio.create_task(periodic_ytdlp_update())
 
 
 async def on_shutdown() -> None:

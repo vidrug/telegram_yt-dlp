@@ -146,7 +146,7 @@ def build_format_keyboard(
 
     rows: list[list[InlineKeyboardButton]] = []
 
-    # "Best quality" button on first page only
+    # Quick quality buttons on first page only
     if page == 0:
         rows.append([InlineKeyboardButton(
             text="⭐ Лучшее качество",
@@ -154,6 +154,23 @@ def build_format_keyboard(
                 session=session_id, fmt="best",
             ).pack(),
         )])
+        va = groups.get("video_audio", [])
+        if len(va) >= 3:
+            mid = va[len(va) // 2]
+            rows.append([InlineKeyboardButton(
+                text=f"🔸 Среднее — {format_button_label(mid)}",
+                callback_data=FormatCallback(
+                    session=session_id, fmt=mid["format_id"],
+                ).pack(),
+            )])
+        if len(va) >= 2:
+            low = va[-1]
+            rows.append([InlineKeyboardButton(
+                text=f"🔹 Низкое — {format_button_label(low)}",
+                callback_data=FormatCallback(
+                    session=session_id, fmt=low["format_id"],
+                ).pack(),
+            )])
 
     for kind, item in page_items:
         if kind == "section":
