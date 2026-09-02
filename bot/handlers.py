@@ -3,8 +3,12 @@
 import asyncio
 import secrets
 import time
+from html import escape
+
 import yt_dlp
 from aiogram import F
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import InputRichMessage
 from aiogram.filters import CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -27,12 +31,26 @@ from bot.downloader import download_media, safe_edit, send_local_file
 from bot.formats import (
     build_format_keyboard,
     build_raw_format_table,
+    build_rich_format_tables,
     extract_formats,
     filter_and_group,
     format_button_label,
     format_filesize,
 )
 from bot.state import bot, executor, router, sessions, user_downloads, web_files
+
+
+def _find_format(s: dict, fmt_id: str) -> tuple[dict | None, str]:
+    """Найти формат по id в группах сессии. Возвращает (формат, категория).
+
+    format_id не обязан быть числовым (hls-1080, http-720p и т.п. на
+    не-YouTube сайтах), поэтому ищем по точному совпадению, а не по isdigit().
+    """
+    for cat, fmts in s["groups"].items():
+        for f in fmts:
+            if f["format_id"] == fmt_id:
+                return f, cat
+    return None, "video_audio"
 
 
 @router.message(CommandStart())
@@ -54,7 +72,7 @@ async def handle_url(message: Message) -> None:
     try:
         info = await loop.run_in_executor(executor, extract_formats, url)
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка при получении форматов:\n<code>{e}</code>")
+        await status_msg.edit_text(f"❌ Ошибка при получении форматов:\n<code>{escape(str(e)[:500])}</code>")
         return
 
     groups = filter_and_group(info)
@@ -75,7 +93,7 @@ async def handle_url(message: Message) -> None:
 
     title = info.get("title", "")
     duration = info.get("duration")
-    header = f"🎬 <b>{title}</b>"
+    header = f"🎬 <b>{escape(title)}</b>"
     if duration:
         mins, secs = divmod(int(duration), 60)
         header += f"\n⏱ {mins}:{secs:02d}"
@@ -129,25 +147,36 @@ async def handle_raw_formats(callback: CallbackQuery, callback_data: RawFormatsC
     await callback.answer()
 
     raw = s.get("raw_formats", [])
-    table = build_raw_format_table(raw)
 
-    # Split into chunks of max 4000 chars (Telegram limit ~4096)
-    chunks = []
-    current = ""
-    for line in table.split("\n"):
-        if len(current) + len(line) + 1 > 3900:
+    try:
+        # Нативные таблицы (Bot API 10.3+)
+        for table_block in build_rich_format_tables(raw):
+            await bot.send_rich_message(
+                chat_id=callback.message.chat.id,
+                rich_message=InputRichMessage(blocks=[table_block]),
+            )
+    except TelegramAPIError as e:
+        # Локальный bot-api сервер без Bot API 10.3 — откат на <pre>-таблицу
+        log.warning("send_rich_message failed (%s), falling back to <pre> table", e)
+        table = build_raw_format_table(raw)
+
+        # Split into chunks of max 4000 chars (Telegram limit ~4096)
+        chunks = []
+        current = ""
+        for line in table.split("\n"):
+            if len(current) + len(line) + 1 > 3900:
+                chunks.append(current)
+                current = line
+            else:
+                current = current + "\n" + line if current else line
+        if current:
             chunks.append(current)
-            current = line
-        else:
-            current = current + "\n" + line if current else line
-    if current:
-        chunks.append(current)
 
-    for chunk in chunks:
-        await bot.send_message(
-            chat_id=callback.message.chat.id,
-            text=f"<pre>{chunk}</pre>",
-        )
+        for chunk in chunks:
+            await bot.send_message(
+                chat_id=callback.message.chat.id,
+                text=f"<pre>{chunk}</pre>",
+            )
 
     s["awaiting_format"] = True
     await bot.send_message(
@@ -197,7 +226,7 @@ async def handle_custom_format(message: Message) -> None:
     ])
 
     await message.answer(
-        f"Формат: <code>{fmt_input}</code>\n\n"
+        f"Формат: <code>{escape(fmt_input)}</code>\n\n"
         "🔇 Убрать рекламные вставки (SponsorBlock)?",
         reply_markup=kb,
     )
@@ -218,15 +247,7 @@ async def handle_format_select(callback: CallbackQuery, callback_data: FormatCal
         return
 
     # Find selected format for label
-    selected_format = None
-    for fmts in s["groups"].values():
-        for f in fmts:
-            if f["format_id"] == fmt_id:
-                selected_format = f
-                break
-        if selected_format:
-            break
-
+    selected_format, _ = _find_format(s, fmt_id)
     if not selected_format:
         # Custom format string (e.g. bestvideo+bestaudio)
         label = fmt_id
@@ -250,7 +271,7 @@ async def handle_format_select(callback: CallbackQuery, callback_data: FormatCal
     ])
 
     await callback.message.edit_text(
-        f"Выбран формат: <b>{label}</b>\n\n"
+        f"Выбран формат: <b>{escape(label)}</b>\n\n"
         "🔇 Убрать рекламные вставки (SponsorBlock)?",
         reply_markup=kb,
     )
@@ -288,21 +309,8 @@ async def _execute_download(
     user_id = callback.from_user.id
 
     # Determine format category
-    is_video_only = False
-    is_custom = "+" in fmt_id or not fmt_id.isdigit()
-    selected_format = None
-    cat_label = "video_audio"
-
-    if not is_custom:
-        for cat, fmts in s["groups"].items():
-            for f in fmts:
-                if f["format_id"] == fmt_id:
-                    selected_format = f
-                    is_video_only = cat == "video_only"
-                    cat_label = cat
-                    break
-            if selected_format:
-                break
+    selected_format, cat_label = _find_format(s, fmt_id)
+    is_video_only = selected_format is not None and cat_label == "video_only"
 
     current = user_downloads.get(user_id, 0)
     user_downloads[user_id] = current + 1
@@ -361,7 +369,7 @@ async def _execute_download(
     except yt_dlp.utils.DownloadError as e:
         log.warning("Download error for session %s: %s", sid, e)
         retry_kb = _build_retry_kb(sid, fmt_id, sponsorblock)
-        err_short = str(e)[:200]
+        err_short = escape(str(e)[:200])
         try:
             await progress_msg.edit_text(
                 f"❌ Ошибка скачивания:\n<code>{err_short}</code>\n\n"
@@ -376,7 +384,7 @@ async def _execute_download(
     except Exception as e:
         log.exception("Download/send error for session %s", sid)
         retry_kb = _build_retry_kb(sid, fmt_id, sponsorblock)
-        err_short = str(e)[:200]
+        err_short = escape(str(e)[:200])
         try:
             await progress_msg.edit_text(
                 f"❌ Произошла ошибка:\n<code>{err_short}</code>\n\n"
@@ -420,22 +428,12 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
     await callback.answer()
 
     # Build label for progress message
-    is_custom = "+" in fmt_id or not fmt_id.isdigit()
-    selected_format = None
-    if not is_custom:
-        for fmts in s["groups"].values():
-            for f in fmts:
-                if f["format_id"] == fmt_id:
-                    selected_format = f
-                    break
-            if selected_format:
-                break
-
+    selected_format, _ = _find_format(s, fmt_id)
     label = format_button_label(selected_format) if selected_format else fmt_id
     sb_text = " | SponsorBlock ✅" if sponsorblock else ""
 
     progress_msg = await callback.message.edit_text(
-        f"⬇️ Скачиваю: {label}{sb_text}\n\nПодготовка..."
+        f"⬇️ Скачиваю: {escape(label)}{sb_text}\n\nПодготовка..."
     )
 
     await _execute_download(callback, sid, fmt_id, sponsorblock, s, progress_msg)
@@ -467,22 +465,12 @@ async def handle_retry(callback: CallbackQuery, callback_data: RetryCallback) ->
     await callback.answer()
 
     # Build label
-    is_custom = "+" in fmt_id or not fmt_id.isdigit()
-    selected_format = None
-    if not is_custom:
-        for fmts in s["groups"].values():
-            for f in fmts:
-                if f["format_id"] == fmt_id:
-                    selected_format = f
-                    break
-            if selected_format:
-                break
-
+    selected_format, _ = _find_format(s, fmt_id)
     label = format_button_label(selected_format) if selected_format else fmt_id
     sb_text = " | SponsorBlock" if sponsorblock else ""
 
     progress_msg = await callback.message.edit_text(
-        f"🔄 Возобновляю скачивание: {label}{sb_text}\n\nПодготовка..."
+        f"🔄 Возобновляю скачивание: {escape(label)}{sb_text}\n\nПодготовка..."
     )
 
     await _execute_download(callback, sid, fmt_id, sponsorblock, s, progress_msg, is_retry=True)

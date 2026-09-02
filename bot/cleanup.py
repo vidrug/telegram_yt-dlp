@@ -1,11 +1,13 @@
 """Cleanup routines for sessions, download dirs, web files, and yt-dlp updates."""
 
 import asyncio
+import os
 import shutil
+import sys
 import time
 
 from bot.config import DOWNLOAD_DIR, SESSION_TTL, WEB_FILE_TTL, log
-from bot.state import sessions, web_files
+from bot.state import sessions, user_downloads, web_files
 
 YT_DLP_UPDATE_INTERVAL = 24 * 3600  # 24 hours
 
@@ -47,22 +49,29 @@ async def session_cleanup() -> None:
     """Remove expired sessions every 5 minutes."""
     while True:
         await asyncio.sleep(300)
-        now = time.time()
-        expired = []
-        for sid, s in sessions.items():
-            # Sessions with .part files (awaiting retry) live up to 8 hours
-            has_parts = any(
-                f.name.endswith(".part")
-                for f in (DOWNLOAD_DIR / sid).iterdir()
-            ) if (DOWNLOAD_DIR / sid).exists() else False
-            ttl = WEB_FILE_TTL if has_parts else SESSION_TTL
-            if now - s["created"] > ttl:
-                expired.append(sid)
-        for sid in expired:
-            sessions.pop(sid, None)
-            cleanup_session_files(sid)
-        if expired:
-            log.info("Cleaned up %d expired sessions", len(expired))
+        try:
+            now = time.time()
+            expired = []
+            for sid, s in list(sessions.items()):
+                # Sessions with .part files (awaiting retry) live up to 8 hours
+                try:
+                    has_parts = any(
+                        f.name.endswith(".part")
+                        for f in (DOWNLOAD_DIR / sid).iterdir()
+                    )
+                except OSError:
+                    # каталог удалён параллельно (periodic_cleanup / cancel)
+                    has_parts = False
+                ttl = WEB_FILE_TTL if has_parts else SESSION_TTL
+                if now - s["created"] > ttl:
+                    expired.append(sid)
+            for sid in expired:
+                sessions.pop(sid, None)
+                cleanup_session_files(sid)
+            if expired:
+                log.info("Cleaned up %d expired sessions", len(expired))
+        except Exception as e:
+            log.error("session_cleanup error: %s", e)
 
 
 async def periodic_ytdlp_update() -> None:
@@ -72,7 +81,7 @@ async def periodic_ytdlp_update() -> None:
         try:
             log.info("Updating yt-dlp...")
             proc = await asyncio.create_subprocess_exec(
-                "pip", "install", "-U", "yt-dlp",
+                sys.executable, "-m", "pip", "install", "-U", "yt-dlp",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -80,7 +89,21 @@ async def periodic_ytdlp_update() -> None:
             output = stdout.decode().strip()
             if "Successfully installed" in output:
                 log.info("yt-dlp updated: %s", output.split("\n")[-1])
+                await _restart_when_idle()
             else:
                 log.info("yt-dlp already up to date")
         except Exception as e:
             log.error("yt-dlp update error: %s", e)
+
+
+async def _restart_when_idle() -> None:
+    """Exit the process once no downloads or web links are active.
+
+    pip обновляет файлы на диске, но уже импортированный модуль yt_dlp
+    остаётся старым — новые экстракторы подхватятся только после рестарта.
+    Выходим, когда бот простаивает; docker restart policy поднимет контейнер.
+    """
+    while sum(user_downloads.values()) > 0 or web_files:
+        await asyncio.sleep(60)
+    log.info("Restarting to load updated yt-dlp")
+    os._exit(0)

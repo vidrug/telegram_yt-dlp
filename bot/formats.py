@@ -1,7 +1,14 @@
 """Format helpers: classification, labels, keyboard building, raw table."""
 
 import yt_dlp
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputRichBlockTable,
+    RichBlockTableCell,
+    RichTextBold,
+    RichTextCode,
+)
 
 from bot.callbacks import (
     CancelCallback,
@@ -121,6 +128,62 @@ def build_raw_format_table(formats: list[dict]) -> str:
             f"{fid:<6}{ext:<6}{res:<12}{fps_s:<5}{vcodec:<10}{acodec:<8}{size:<9}{note}"
         )
     return "\n".join(lines)
+
+
+RICH_TABLE_MAX_ROWS = 50  # строк данных на одно сообщение
+
+
+def build_rich_format_tables(formats: list[dict]) -> list[InputRichBlockTable]:
+    """Build native Telegram tables (Bot API 10.3+) for the format list.
+
+    Возвращает несколько таблиц, если форматов больше RICH_TABLE_MAX_ROWS —
+    каждая отправляется отдельным сообщением.
+    """
+    def cell(text, align: str = "left", header: bool = False) -> RichBlockTableCell:
+        return RichBlockTableCell(
+            align=align, valign="middle", text=text, is_header=header or None,
+        )
+
+    header_row = [
+        cell(RichTextBold(text=col), align, header=True)
+        for col, align in (
+            ("ID", "left"), ("EXT", "left"), ("RES", "left"),
+            ("FPS", "right"), ("CODEC", "left"), ("SIZE", "right"),
+        )
+    ]
+
+    rows = []
+    for f in formats:
+        fid = str(f.get("format_id", "?"))
+        vcodec = (f.get("vcodec") or "none").split(".")[0]
+        acodec = (f.get("acodec") or "none").split(".")[0]
+        if vcodec != "none" and acodec != "none":
+            codec = f"{vcodec}+{acodec}"
+        elif vcodec != "none":
+            codec = vcodec
+        elif acodec != "none":
+            codec = acodec
+        else:
+            codec = "?"
+        fps = f.get("fps")
+        rows.append([
+            cell(RichTextCode(text=fid)),
+            cell(f.get("ext", "?")),
+            cell(f.get("resolution") or f.get("format_note") or "?"),
+            cell(str(int(fps)) if fps else "-", align="right"),
+            cell(codec),
+            cell(format_filesize(f.get("filesize") or f.get("filesize_approx")), align="right"),
+        ])
+
+    return [
+        InputRichBlockTable(
+            cells=[header_row] + rows[i:i + RICH_TABLE_MAX_ROWS],
+            is_bordered=True,
+            is_striped=True,
+            is_compact=True,
+        )
+        for i in range(0, len(rows), RICH_TABLE_MAX_ROWS)
+    ]
 
 
 def build_format_keyboard(

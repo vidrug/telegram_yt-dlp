@@ -139,17 +139,19 @@ async def send_local_file(
     file_size = file_path.stat().st_size
     log.info("Sending file: %s (%s bytes) via %s", file_path, file_size, method)
 
+    # --form-string для текстовых полей: title, начинающийся с "@" или "<",
+    # иначе трактуется curl как "загрузить из файла", а ";" режет значение на опции
     cmd = [
         "curl", "-s", "-X", "POST", url,
-        "-F", f"chat_id={chat_id}",
+        "--form-string", f"chat_id={chat_id}",
         "-F", f"{field}=@{file_path}",
     ]
     if method == "sendVideo":
-        cmd.extend(["-F", f"caption={title}", "-F", "supports_streaming=true"])
+        cmd.extend(["--form-string", f"caption={title}", "--form-string", "supports_streaming=true"])
     elif method == "sendAudio":
-        cmd.extend(["-F", f"title={title}"])
+        cmd.extend(["--form-string", f"title={title}"])
     else:
-        cmd.extend(["-F", f"caption={title}"])
+        cmd.extend(["--form-string", f"caption={title}"])
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
