@@ -191,9 +191,9 @@ async def handle_raw_formats(callback: CallbackQuery, callback_data: RawFormatsC
     )
 
 
-@router.message(F.text.regexp(r"^[\w+]+$"))
+@router.message(F.text.regexp(r"^[\w+\-/\[\]<>=.,*]+$"))
 async def handle_custom_format(message: Message) -> None:
-    """Handle manual format input like '315+251'."""
+    """Handle manual format input like '315+251', '139-0', 'bv*[height<=720]+ba/b'."""
     user_id = message.from_user.id
     # Find session awaiting format input for this user
     sid = None
@@ -210,20 +210,26 @@ async def handle_custom_format(message: Message) -> None:
     s["awaiting_format"] = False
     fmt_input = message.text.strip()
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="✅ Да, убрать рекламу",
-                callback_data=SponsorBlockCallback(session=sid, fmt=fmt_input, remove=1).pack(),
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                text="⏩ Нет, скачать как есть",
-                callback_data=SponsorBlockCallback(session=sid, fmt=fmt_input, remove=0).pack(),
-            ),
-        ],
-    ])
+    try:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Да, убрать рекламу",
+                    callback_data=SponsorBlockCallback(session=sid, fmt=fmt_input, remove=1).pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⏩ Нет, скачать как есть",
+                    callback_data=SponsorBlockCallback(session=sid, fmt=fmt_input, remove=0).pack(),
+                ),
+            ],
+        ])
+    except ValueError:
+        # callback_data ограничена 64 байтами
+        s["awaiting_format"] = True
+        await message.answer("❌ Строка формата слишком длинная, попробуй короче.")
+        return
 
     await message.answer(
         f"Формат: <code>{escape(fmt_input)}</code>\n\n"
@@ -310,7 +316,7 @@ async def _execute_download(
 
     # Determine format category
     selected_format, cat_label = _find_format(s, fmt_id)
-    is_video_only = selected_format is not None and cat_label == "video_only"
+    category = cat_label if selected_format else "custom"
 
     current = user_downloads.get(user_id, 0)
     user_downloads[user_id] = current + 1
@@ -324,7 +330,7 @@ async def _execute_download(
             s["url"],
             fmt_id,
             sid,
-            is_video_only,
+            category,
             sponsorblock,
             loop,
             progress_msg,

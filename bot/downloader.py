@@ -16,7 +16,7 @@ def download_media(
     url: str,
     format_id: str,
     session_id: str,
-    is_video_only: bool,
+    category: str,  # video_audio | video_only | audio_only | custom
     sponsorblock: bool,
     loop: asyncio.AbstractEventLoop,
     progress_msg: Message,
@@ -26,12 +26,22 @@ def download_media(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_template = str(out_dir / "%(id)s.%(ext)s")
 
+    # Между показом списка и скачиванием происходит повторная экстракция,
+    # и выбранный id может исчезнуть (Instagram меняет id между запросами,
+    # YouTube ротирует клиентов). Поэтому для кнопочных форматов добавляем
+    # фолбэки на ближайшую альтернативу; ручной ввод — как есть.
     if format_id == "best":
         fmt = "bestvideo*+bestaudio/best"
-    elif is_video_only:
-        fmt = f"{format_id}+bestaudio"
-    else:
+    elif category == "custom":
         fmt = format_id
+    elif category == "video_only":
+        fmt = f"{format_id}+bestaudio/{format_id}/bestvideo*+bestaudio/best"
+    elif category == "audio_only":
+        fmt = f"{format_id}/bestaudio/best"
+    else:  # video_audio
+        fmt = f"{format_id}/bestvideo*+bestaudio/best"
+
+    log.info("session %s: downloading %r via selector %r", session_id, format_id, fmt)
 
     last_update = [0.0]
 
@@ -66,7 +76,7 @@ def download_media(
     ydl_opts = {
         "format": fmt,
         "outtmpl": out_template,
-        "merge_output_format": "mp4" if is_video_only else None,
+        "merge_output_format": "mp4" if category == "video_only" else None,
         "quiet": True,
         "no_warnings": True,
         "progress_hooks": [progress_hook],
