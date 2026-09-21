@@ -8,7 +8,8 @@ from pathlib import Path
 import yt_dlp
 from aiogram.types import Message
 
-from bot.config import API_URL, BOT_TOKEN, COOKIES_FILE, DOWNLOAD_DIR, PROGRESS_INTERVAL, log
+from bot.config import API_URL, BOT_TOKEN, DOWNLOAD_DIR, PROGRESS_INTERVAL, log
+from bot.cookies import cookie_file_for
 from bot.formats import format_filesize
 
 
@@ -85,8 +86,6 @@ def download_media(
         "fragment_retries": 5,  # retry individual fragments (DASH/HLS)
         "concurrent_fragment_downloads": 4,  # download 4 fragments in parallel
     }
-    if COOKIES_FILE:
-        ydl_opts["cookiefile"] = str(COOKIES_FILE)
     if sponsorblock:
         ydl_opts["sponsorblock_remove"] = {"all"}
         ydl_opts["postprocessors"] = [{
@@ -100,11 +99,14 @@ def download_media(
     # Remove None values
     ydl_opts = {k: v for k, v in ydl_opts.items() if v is not None}
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+    with cookie_file_for(url) as cookie_path:
+        if cookie_path:
+            ydl_opts["cookiefile"] = cookie_path
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
 
     # Find the downloaded file
-    filename = ydl.prepare_filename(info)
     # yt-dlp might change extension after merge
     result = Path(filename)
     if not result.exists():
