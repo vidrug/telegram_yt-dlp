@@ -13,6 +13,61 @@ from bot.cookies import cookie_file_for
 from bot.formats import format_filesize
 
 
+POSTPROCESSOR_STAGES = {
+    "Merger": "🔄 Склеиваю видео и аудио…",
+    "SponsorBlock": "✂️ Ищу рекламные вставки…",
+    "ModifyChapters": "✂️ Вырезаю рекламу…",
+    "FFmpegFixupM4a": "🔧 Исправляю контейнер…",
+    "FFmpegFixupM3u8": "🔧 Исправляю контейнер…",
+}
+
+PROGRESS_BAR_WIDTH = 14
+
+
+def _progress_bar(pct: float) -> str:
+    filled = min(PROGRESS_BAR_WIDTH, int(pct / 100 * PROGRESS_BAR_WIDTH))
+    return "▓" * filled + "░" * (PROGRESS_BAR_WIDTH - filled)
+
+
+def _format_eta(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}:{secs:02d}"
+
+
+def _progress_text(d: dict) -> str:
+    # при video+audio yt-dlp качает дорожки по очереди, у каждой свои 0–100%
+    info = d.get("info_dict") or {}
+    if info.get("vcodec") not in (None, "none"):
+        what = "видео"
+    elif info.get("acodec") not in (None, "none"):
+        what = "аудио"
+    else:
+        what = ""
+    title = f"⬇️ Скачиваю {what}".rstrip()
+
+    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+    downloaded = d.get("downloaded_bytes") or 0
+    if total:
+        total = max(total, downloaded)  # total_bytes_estimate бывает меньше факта
+    details = []
+    if total:
+        pct = min(100.0, downloaded / total * 100)
+        title += f" — {pct:.0f}%"
+        details.append(f"{format_filesize(downloaded)} / {format_filesize(total)}")
+    else:
+        details.append(format_filesize(downloaded))
+    if d.get("speed"):
+        details.append(f"{format_filesize(d['speed'])}/s")
+    if d.get("eta"):
+        details.append(f"осталось {_format_eta(d['eta'])}")
+
+    lines = [title]
+    if total:
+        lines.append(_progress_bar(pct))
+    lines.append(" · ".join(details))
+    return "\n".join(lines)
+
+
 def download_media(
     url: str,
     format_id: str,
@@ -47,6 +102,9 @@ def download_media(
 
     last_update = [0.0]
 
+    def show(text: str) -> None:
+        asyncio.run_coroutine_threadsafe(safe_edit(progress_msg, text), loop)
+
     def progress_hook(d: dict) -> None:
         if d.get("status") != "downloading":
             return
@@ -54,26 +112,16 @@ def download_media(
         if now - last_update[0] < PROGRESS_INTERVAL:
             return
         last_update[0] = now
+        show(_progress_text(d))
 
-        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-        downloaded = d.get("downloaded_bytes", 0)
-        speed = d.get("speed")
-        eta = d.get("eta")
-
-        parts = ["⬇️ Скачивание..."]
-        if total:
-            pct = downloaded / total * 100
-            parts.append(f"{pct:.1f}%")
-            parts.append(f"({format_filesize(downloaded)} / {format_filesize(total)})")
-        if speed:
-            parts.append(f"| {format_filesize(speed)}/s")
-        if eta:
-            parts.append(f"| ETA {eta}s")
-
-        text = " ".join(parts)
-        asyncio.run_coroutine_threadsafe(
-            safe_edit(progress_msg, text), loop
-        )
+    def postprocessor_hook(d: dict) -> None:
+        # склейка/вырезание рекламы идут десятки секунд — без статуса
+        # сообщение выглядит зависшим на последних процентах скачивания
+        if d.get("status") != "started":
+            return
+        stage = POSTPROCESSOR_STAGES.get(d.get("postprocessor"))
+        if stage:
+            show(stage)
 
     ydl_opts = {
         "format": fmt,
@@ -81,7 +129,9 @@ def download_media(
         "merge_output_format": "mp4" if category == "video_only" else None,
         "quiet": True,
         "no_warnings": True,
+        "noprogress": True,  # консольный прогресс yt-dlp засорял логи контейнера
         "progress_hooks": [progress_hook],
+        "postprocessor_hooks": [postprocessor_hook],
         "continuedl": True,  # resume partial .part files
         "retries": 3,  # retry on transient errors
         "fragment_retries": 5,  # retry individual fragments (DASH/HLS)
@@ -126,8 +176,10 @@ def download_media(
 async def safe_edit(msg: Message, text: str) -> None:
     try:
         await msg.edit_text(text)
-    except Exception:
-        pass
+    except Exception as e:
+        # раньше ошибки глотались молча — и пропавший прогресс было не отладить
+        if "message is not modified" not in str(e):
+            log.warning("progress edit failed: %s: %s", type(e).__name__, e)
 
 
 async def send_local_file(
