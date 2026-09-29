@@ -81,7 +81,7 @@ async def periodic_ytdlp_update() -> None:
         try:
             log.info("Updating yt-dlp...")
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "pip", "install", "-U", "yt-dlp",
+                sys.executable, "-m", "pip", "install", "-U", "yt-dlp[default]",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
