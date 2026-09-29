@@ -1,6 +1,9 @@
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl && rm -rf /var/lib/apt/lists/*
+# Зеркало Debian: с deb.debian.org сборка из Китая занимает часы (см. docs/deployment-china.md)
+RUN sed -i s@deb.debian.org@mirrors.aliyun.com@g /etc/apt/sources.list.d/debian.sources || true; \
+    apt-get update && apt-get install -y --no-install-recommends ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # JS runtime для yt-dlp: без него извлечение YouTube объявлено устаревшим
 # и часть форматов не отдаётся (см. https://github.com/yt-dlp/yt-dlp/wiki/EJS)

@@ -11,6 +11,8 @@ from bot.state import bot, dp, sessions, web_files
 from bot.web import create_web_app
 
 # Import handlers to register them on the router
+from bot import status  # noqa: F401  # команды владельца — ДО handlers: их catch-all регулярка иначе перехватит /status
+from bot import provision  # noqa: F401  # /config — выдача и создание доступов
 from bot import handlers  # noqa: F401
 
 
@@ -27,6 +29,7 @@ async def on_startup() -> None:
         log.info("logOut skipped (already local or cooldown): %s", e)
 
     await bot.delete_webhook(drop_pending_updates=True)
+    await status.register_owner_commands()
     asyncio.create_task(periodic_cleanup())
     asyncio.create_task(session_cleanup())
     asyncio.create_task(periodic_ytdlp_update())

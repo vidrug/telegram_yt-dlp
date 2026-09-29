@@ -21,6 +21,7 @@ def download_media(
     sponsorblock: bool,
     loop: asyncio.AbstractEventLoop,
     progress_msg: Message,
+    user_id: int | None = None,
 ) -> Path:
     """Download media file (blocking). Returns path to downloaded file."""
     out_dir = DOWNLOAD_DIR / session_id
@@ -99,7 +100,7 @@ def download_media(
     # Remove None values
     ydl_opts = {k: v for k, v in ydl_opts.items() if v is not None}
 
-    with cookie_file_for(url) as cookie_path:
+    with cookie_file_for(url, user_id) as cookie_path:
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

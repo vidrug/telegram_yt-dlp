@@ -19,9 +19,17 @@ services:
       TELEGRAM_API_URL: http://telegram-bot-api:8081
       SHARED_DIR: /shared
       EXTERNAL_URL: ${EXTERNAL_URL}
+      PANEL_URL: http://host.docker.internal:1080
+      OWNER_ID: ${OWNER_ID}
+      PANEL_TOKEN: ${PANEL_TOKEN}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - shared:/shared
       - ./cookies.txt:/app/cookies.txt
+      # присланные боту документы (cookies.txt): в локальном режиме Bot API
+      # отдаёт путь на своём диске, aiogram читает файл напрямую
+      - botapi-data:/var/lib/telegram-bot-api:ro
     depends_on:
       - telegram-bot-api
     restart: unless-stopped

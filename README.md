@@ -4,6 +4,9 @@ Telegram-бот для скачивания видео и аудио с YouTube 
 
 Файлы до 2 ГБ отправляются через локальный Telegram Bot API сервер. Файлы свыше 2 ГБ раздаются через встроенный веб-сервер по прямой ссылке.
 
+> **Развёртывание.** Бот работает на сервере china; история переноса, команды владельца
+> (`/status`, `/stats`, `/vpn`, `/config`) и грабли — в [docs/deployment-china.md](docs/deployment-china.md).
+
 ## Возможности
 
 - Скачивание с YouTube, VK, RuTube и [1000+ других сайтов](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)

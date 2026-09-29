@@ -1,15 +1,17 @@
 """Telegram message and callback handlers."""
 
 import asyncio
+import io
 import secrets
 import time
 from html import escape
 
 import yt_dlp
 from aiogram import F
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import InputRichMessage
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -27,6 +29,15 @@ from bot.callbacks import (
 )
 from bot.cleanup import cleanup_session_files
 from bot.config import EXTERNAL_URL, MAX_CONCURRENT_PER_USER, MAX_FILE_SIZE, log
+from bot.cookies import (
+    COOKIES_INSTRUCTION,
+    MAX_COOKIE_FILE_SIZE,
+    delete_user_cookies,
+    needs_cookies,
+    save_user_cookies,
+    user_cookie_path,
+    validate_cookie_file,
+)
 from bot.downloader import download_media, safe_edit, send_local_file
 from bot.formats import (
     build_format_keyboard,
@@ -37,7 +48,7 @@ from bot.formats import (
     format_button_label,
     format_filesize,
 )
-from bot.state import bot, executor, router, sessions, user_downloads, web_files
+from bot.state import awaiting_cookies, bot, executor, router, sessions, user_downloads, web_files
 
 
 def _find_format(s: dict, fmt_id: str) -> tuple[dict | None, str]:
@@ -60,18 +71,107 @@ async def cmd_start(message: Message) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Cookies: YouTube с датацентрового IP требует вход в аккаунт
+# ---------------------------------------------------------------------------
+
+async def _ask_for_cookies(msg: Message, url: str, user_id: int) -> None:
+    """Запомнить ссылку и показать инструкцию, как прислать куки."""
+    awaiting_cookies[user_id] = url
+    prefix = ""
+    if user_cookie_path(user_id).exists():
+        prefix = "⚠️ Сохранённые куки больше не работают — нужны свежие.\n\n"
+    try:
+        await msg.edit_text(prefix + COOKIES_INSTRUCTION, disable_web_page_preview=True)
+    except TelegramAPIError:
+        await msg.answer(prefix + COOKIES_INSTRUCTION, disable_web_page_preview=True)
+
+
+async def _accept_cookies(message: Message, text: str) -> None:
+    user_id = message.from_user.id
+    # в сообщении секреты аккаунта — не оставляем их в чате
+    try:
+        await message.delete()
+    except TelegramAPIError:
+        pass
+
+    error = validate_cookie_file(text)
+    if error:
+        await message.answer(f"❌ {escape(error)}\n\nПришли файл ещё раз.")
+        return
+
+    save_user_cookies(user_id, text)
+    log.info("user %s: cookies saved", user_id)
+    url = awaiting_cookies.pop(user_id, None)
+    if url:
+        await message.answer("✅ Куки сохранены, пробую ещё раз…")
+        await _process_url(message, url, user_id)
+    else:
+        await message.answer("✅ Куки сохранены. Присылай ссылку.")
+
+
+def _looks_like_cookies(text: str) -> bool:
+    return "youtube.com" in text and text.count("\n") >= 2 and (
+        "\t" in text or "TRUE" in text or "FALSE" in text
+    )
+
+
+@router.message(Command("forgetcookies"))
+async def cmd_forget_cookies(message: Message) -> None:
+    awaiting_cookies.pop(message.from_user.id, None)
+    if delete_user_cookies(message.from_user.id):
+        await message.answer("🗑 Твои куки удалены.")
+    else:
+        await message.answer("У меня нет сохранённых куки от тебя.")
+
+
+@router.message(F.document)
+async def handle_cookie_document(message: Message) -> None:
+    doc = message.document
+    name = (doc.file_name or "").lower()
+    if message.from_user.id not in awaiting_cookies and "cookie" not in name:
+        raise SkipHandler
+    if doc.file_size and doc.file_size > MAX_COOKIE_FILE_SIZE:
+        await message.answer("❌ Файл слишком большой для cookies.txt.")
+        return
+
+    buf = io.BytesIO()
+    try:
+        await bot.download(doc, destination=buf)
+    except Exception:
+        log.exception("cannot download cookie file from user %s", message.from_user.id)
+        await message.answer("❌ Не удалось получить файл. Попробуй вставить его содержимое текстом.")
+        return
+    await _accept_cookies(message, buf.getvalue().decode("utf-8", errors="replace"))
+
+
+@router.message(F.text.func(_looks_like_cookies))
+async def handle_cookie_text(message: Message) -> None:
+    await _accept_cookies(message, message.text)
+
+
+# ---------------------------------------------------------------------------
+# URL
+# ---------------------------------------------------------------------------
+
 URL_PATTERN = r"https?://\S+"
 
 
 @router.message(F.text.regexp(URL_PATTERN))
 async def handle_url(message: Message) -> None:
-    url = message.text.strip()
+    await _process_url(message, message.text.strip(), message.from_user.id)
+
+
+async def _process_url(message: Message, url: str, user_id: int) -> None:
     status_msg = await message.answer("⏳ Получаю список форматов...")
 
     loop = asyncio.get_running_loop()
     try:
-        info = await loop.run_in_executor(executor, extract_formats, url)
+        info = await loop.run_in_executor(executor, extract_formats, url, user_id)
     except Exception as e:
+        if needs_cookies(e):
+            await _ask_for_cookies(status_msg, url, user_id)
+            return
         await status_msg.edit_text(f"❌ Ошибка при получении форматов:\n<code>{escape(str(e)[:500])}</code>")
         return
 
@@ -88,7 +188,7 @@ async def handle_url(message: Message) -> None:
         "raw_formats": info.get("formats") or [],
         "title": info.get("title", "video"),
         "created": time.time(),
-        "user_id": message.from_user.id,
+        "user_id": user_id,
     }
 
     title = info.get("title", "")
@@ -191,7 +291,8 @@ async def handle_raw_formats(callback: CallbackQuery, callback_data: RawFormatsC
     )
 
 
-@router.message(F.text.regexp(r"^[\w+\-/\[\]<>=.,*]+$"))
+# (?!/) — не перехватывать команды (/status и т.п.): слэш допустим только внутри
+@router.message(F.text.regexp(r"^(?!/)[\w+\-/\[\]<>=.,*]+$"))
 async def handle_custom_format(message: Message) -> None:
     """Handle manual format input like '315+251', '139-0', 'bv*[height<=720]+ba/b'."""
     user_id = message.from_user.id
@@ -205,7 +306,8 @@ async def handle_custom_format(message: Message) -> None:
             break
 
     if not s:
-        return  # Not awaiting format input, skip
+        # Не ждём ввода формата — отдаём сообщение следующим хендлерам
+        raise SkipHandler
 
     s["awaiting_format"] = False
     fmt_input = message.text.strip()
@@ -334,6 +436,7 @@ async def _execute_download(
             sponsorblock,
             loop,
             progress_msg,
+            user_id,
         )
 
         if not file_path.exists():
@@ -374,6 +477,9 @@ async def _execute_download(
 
     except yt_dlp.utils.DownloadError as e:
         log.warning("Download error for session %s: %s", sid, e)
+        if needs_cookies(e):
+            await _ask_for_cookies(progress_msg, s["url"], user_id)
+            return
         retry_kb = _build_retry_kb(sid, fmt_id, sponsorblock)
         err_short = escape(str(e)[:200])
         try:

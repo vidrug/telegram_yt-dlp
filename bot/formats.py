@@ -64,7 +64,7 @@ def format_button_label(f: dict) -> str:
     return " | ".join(parts)
 
 
-def extract_formats(url: str) -> dict:
+def extract_formats(url: str, user_id: int | None = None) -> dict:
     """Run yt-dlp extract_info (blocking)."""
     from bot.cookies import cookie_file_for
 
@@ -73,7 +73,7 @@ def extract_formats(url: str) -> dict:
         "no_warnings": True,
         "skip_download": True,
     }
-    with cookie_file_for(url) as cookie_path:
+    with cookie_file_for(url, user_id) as cookie_path:
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

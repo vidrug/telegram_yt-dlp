@@ -23,3 +23,8 @@ MAX_CONCURRENT_PER_USER = 2
 PROGRESS_INTERVAL = 3  # seconds
 COOKIES_FILE = Path(os.environ.get("COOKIES_FILE", "/app/cookies.txt"))
 COOKIES_FILE = COOKIES_FILE if COOKIES_FILE.exists() else None
+
+# Панель прокси (на хосте) и владелец — для команд /status, /stats, /vpn, /config
+PANEL_URL = os.environ.get("PANEL_URL", "http://host.docker.internal:1080").rstrip("/")
+OWNER_ID = int(os.environ.get("OWNER_ID") or 0)
+PANEL_TOKEN = os.environ.get("PANEL_TOKEN", "")
