@@ -20,8 +20,8 @@ services:
       SHARED_DIR: /shared
       EXTERNAL_URL: ${EXTERNAL_URL}
       PANEL_URL: http://host.docker.internal:1080
-      OWNER_ID: ${OWNER_ID}
-      PANEL_TOKEN: ${PANEL_TOKEN}
+      OWNER_ID: ${OWNER_ID:-}  # пусто — команды владельца (прокси/VPN) отключены
+      PANEL_TOKEN: ${PANEL_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
