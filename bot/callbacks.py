@@ -31,3 +31,8 @@ class RetryCallback(CallbackData, prefix="rt"):
     session: str
     fmt: str
     remove: int  # sponsorblock: 1 = yes, 0 = no
+
+
+class ClassicCallback(CallbackData, prefix="kb"):
+    """Показать классическую клавиатуру форматов вместо виджета (старые клиенты)."""
+    session: str

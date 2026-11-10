@@ -28,3 +28,7 @@ COOKIES_FILE = COOKIES_FILE if COOKIES_FILE.exists() else None
 PANEL_URL = os.environ.get("PANEL_URL", "http://host.docker.internal:1080").rstrip("/")
 OWNER_ID = int(os.environ.get("OWNER_ID") or 0)
 PANEL_TOKEN = os.environ.get("PANEL_TOKEN", "")
+
+# HTML-виджеты (Bot API 10.4): выбор формата и прогресс прямо в сообщении.
+# USE_WIDGETS=0 — всегда классические кнопки.
+USE_WIDGETS = os.environ.get("USE_WIDGETS", "1") != "0"

@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import threading
 import time
 from pathlib import Path
+from typing import Protocol
 
 import yt_dlp
 from aiogram.types import Message
@@ -34,7 +36,8 @@ def _format_eta(seconds: float) -> str:
     return f"{minutes}:{secs:02d}"
 
 
-def _progress_text(d: dict) -> str:
+def progress_info(d: dict) -> tuple[str, float | None, str]:
+    """yt-dlp progress dict -> (заголовок, процент или None, строка деталей)."""
     # при video+audio yt-dlp качает дорожки по очереди, у каждой свои 0–100%
     info = d.get("info_dict") or {}
     if info.get("vcodec") not in (None, "none"):
@@ -49,6 +52,7 @@ def _progress_text(d: dict) -> str:
     downloaded = d.get("downloaded_bytes") or 0
     if total:
         total = max(total, downloaded)  # total_bytes_estimate бывает меньше факта
+    pct = None
     details = []
     if total:
         pct = min(100.0, downloaded / total * 100)
@@ -60,12 +64,24 @@ def _progress_text(d: dict) -> str:
         details.append(f"{format_filesize(d['speed'])}/s")
     if d.get("eta"):
         details.append(f"осталось {_format_eta(d['eta'])}")
+    return title, pct, " · ".join(details)
 
+
+def progress_text(d: dict) -> str:
+    title, pct, details = progress_info(d)
     lines = [title]
-    if total:
+    if pct is not None:
         lines.append(_progress_bar(pct))
-    lines.append(" · ".join(details))
+    lines.append(details)
     return "\n".join(lines)
+
+
+class ProgressSink(Protocol):
+    """Куда показывать прогресс: текстовое сообщение или виджет."""
+
+    async def on_progress(self, d: dict) -> None: ...
+
+    async def on_stage(self, text: str) -> None: ...
 
 
 def download_media(
@@ -75,10 +91,14 @@ def download_media(
     category: str,  # video_audio | video_only | audio_only | custom
     sponsorblock: bool,
     loop: asyncio.AbstractEventLoop,
-    progress_msg: Message,
+    progress: ProgressSink,
     user_id: int | None = None,
+    cancel: threading.Event | None = None,
 ) -> Path:
-    """Download media file (blocking). Returns path to downloaded file."""
+    """Download media file (blocking). Returns path to downloaded file.
+
+    Если cancel выставлен, скачивание прерывается с yt_dlp.utils.DownloadCancelled.
+    """
     out_dir = DOWNLOAD_DIR / session_id
     out_dir.mkdir(parents=True, exist_ok=True)
     out_template = str(out_dir / "%(id)s.%(ext)s")
@@ -102,17 +122,17 @@ def download_media(
 
     last_update = [0.0]
 
-    def show(text: str) -> None:
-        asyncio.run_coroutine_threadsafe(safe_edit(progress_msg, text), loop)
-
     def progress_hook(d: dict) -> None:
+        # проверяем до троттлинга: хук зовётся на каждый фрагмент
+        if cancel is not None and cancel.is_set():
+            raise yt_dlp.utils.DownloadCancelled("cancelled by user")
         if d.get("status") != "downloading":
             return
         now = time.monotonic()
         if now - last_update[0] < PROGRESS_INTERVAL:
             return
         last_update[0] = now
-        show(_progress_text(d))
+        asyncio.run_coroutine_threadsafe(progress.on_progress(d), loop)
 
     def postprocessor_hook(d: dict) -> None:
         # склейка/вырезание рекламы идут десятки секунд — без статуса
@@ -121,7 +141,7 @@ def download_media(
             return
         stage = POSTPROCESSOR_STAGES.get(d.get("postprocessor"))
         if stage:
-            show(stage)
+            asyncio.run_coroutine_threadsafe(progress.on_stage(stage), loop)
 
     ydl_opts = {
         "format": fmt,

@@ -75,7 +75,7 @@ def _has_youtube_account_cookies(path: Path) -> bool:
     )
 
 
-def _is_youtube(url: str) -> bool:
+def is_youtube(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return any(host == h or host.endswith("." + h) for h in YOUTUBE_HOSTS)
 
@@ -93,7 +93,7 @@ def _source_for(url: str, user_id: int | None) -> Path | None:
     for path in candidates:
         if not path.exists():
             continue
-        if _is_youtube(url) and not _has_youtube_account_cookies(path):
+        if is_youtube(url) and not _has_youtube_account_cookies(path):
             continue
         return path
     return None

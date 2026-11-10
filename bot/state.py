@@ -27,3 +27,4 @@ sessions: dict[str, dict] = {}  # session_id -> {url, formats, title, created, u
 user_downloads: dict[int, int] = {}  # user_id -> active download count
 web_files: dict[str, dict] = {}  # session_id -> {path, created, filename}
 awaiting_cookies: dict[int, str] = {}  # user_id -> url, ждём от пользователя cookies.txt
+widget_sessions: dict[tuple[int, int], str] = {}  # (chat_id, message_id) виджета -> session_id

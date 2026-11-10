@@ -1,0 +1,114 @@
+<!--
+  Виджет выбора формата и прогресса скачивания (Bot API 10.4).
+  HTML отправленного виджета изменить нельзя, поэтому он — тонкий рендерер:
+  все тексты, статусы и кнопки присылает бот в chat_data (см. bot/widget.py).
+  Лимит: 4096 байт после zlib -9.
+-->
+<style>
+body{margin:0;padding:10px 12px}
+.t{display:flex;gap:6px;margin-bottom:8px}
+.t button{flex:1;padding:6px}
+.t button:not(.on){background:var(--tg-theme-secondary-bg-color);color:var(--tg-theme-text-color)}
+.r{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;margin-bottom:6px;border-radius:12px;background:var(--tg-theme-secondary-bg-color)}
+.r:active{background:var(--tg-theme-section-separator-color)}
+.q{font-weight:600}
+.m,.n{color:var(--tg-theme-hint-color);font-size:.85em}
+.e{color:var(--tg-theme-destructive-text-color)}
+.ok{color:var(--tg-theme-accent-text-color)}
+.s{display:flex;justify-content:space-between;align-items:center;padding:6px 2px}
+.w{flex:none;width:42px;height:24px;border-radius:12px;background:var(--tg-theme-hint-color);position:relative;transition:background .2s}
+.w:after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s}
+.w.on{background:var(--tg-theme-button-color)}
+.w.on:after{transform:translateX(18px)}
+.b{height:8px;border-radius:4px;margin:10px 0 6px;background:var(--tg-theme-secondary-bg-color);overflow:hidden}
+.b i{display:block;height:100%;border-radius:4px;background:var(--tg-theme-button-color);transition:width 2.8s linear}
+.b.x i{width:35%;animation:x 1.3s ease-in-out infinite}
+@keyframes x{from{transform:translateX(-100%)}to{transform:translateX(300%)}}
+.a{display:flex;gap:8px;margin-top:10px}
+.a button{flex:1}
+</style>
+<div id="app"></div>
+<script>
+const W = window.TelegramWidget, app = document.getElementById('app');
+let tab = 'v', sb = 0, note = '', busy = 0;
+try { sb = +localStorage.sb || 0 } catch (e) {}
+
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
+
+function state() {
+  try { return JSON.parse(W.chatData) || {} } catch (e) { return {} }
+}
+
+// Запрос к боту — строго синхронно в обработчике тапа (правило песочницы)
+function ask(data) {
+  if (busy) return;
+  let p;
+  try { p = W.request(data) } catch (e) { note = 'Ошибка: ' + e.message; return draw() }
+  busy = 1; note = '⏳'; draw();
+  p.then(a => {
+    let r = {};
+    try { r = JSON.parse(a.result || '{}') } catch (e) {}
+    note = r.e || '';
+  }, e => {
+    note = e.code == 'RATE_LIMITED' ? 'Слишком часто — подожди пару секунд' : 'Не получилось: ' + e.code;
+  }).finally(() => { busy = 0; draw() });
+}
+
+// Данные кнопок берём из состояния по индексу, а не вписываем в атрибут onclick
+function act(i) { ask(state().b[i][1]) }
+function choose(key) { ask('d:' + key + ':' + sb) }
+function setTab(t) { tab = t; draw() }
+
+function toggleSb() {
+  sb = sb ? 0 : 1;
+  try { localStorage.sb = sb } catch (e) {}
+  draw();
+}
+
+function pick(s) {
+  const L = { v: s.v || [], a: s.a || [] };
+  const other = tab == 'v' ? 'a' : 'v';
+  if (!L[tab].length && L[other].length) tab = other;
+  let h = '';
+  if (L.v.length && L.a.length) {
+    h += '<div class="t">' + ['v', 'a'].map(t =>
+      `<button class="${t == tab ? 'on' : ''}" onclick="setTab('${t}')">${t == 'v' ? '🎬 Видео' : '🎵 Аудио'} ${L[t].length}</button>`
+    ).join('') + '</div>';
+  }
+  h += L[tab].map((o, i) =>
+    `<div class="r" onclick="choose('${tab}${i}')"><span class="q">${esc(o[0])}</span><span class="m">${esc(o[1])}</span></div>`
+  ).join('');
+  if (s.y) {
+    h += `<div class="s" onclick="toggleSb()"><span>✂️ Вырезать рекламу (SponsorBlock)</span><span class="w${sb ? ' on' : ''}"></span></div>`;
+  }
+  return h;
+}
+
+function job(s) {
+  let h = '';
+  if (s.l) h += `<div class="q">${esc(s.l)}</div>`;
+  if (s.t) h += `<div class="${s.k || 'n'}">${esc(s.t)}</div>`;
+  if (s.p != null) {
+    const ind = s.p < 0;
+    h += `<div class="b${ind ? ' x' : ''}"><i style="width:${ind ? 35 : Math.min(100, s.p)}%"></i></div>`;
+  }
+  if (s.d) h += `<div class="n">${esc(s.d)}</div>`;
+  if (s.b && s.b.length) {
+    h += '<div class="a">' + s.b.map((b, i) =>
+      `<button onclick="act(${i})">${esc(b[0])}</button>`
+    ).join('') + '</div>';
+  }
+  return h;
+}
+
+function draw() {
+  const s = state();
+  let h = s.s == 'job' ? job(s) : pick(s);
+  if (note) h += `<div class="n${note == '⏳' ? '' : ' e'}" style="margin-top:6px">${esc(note)}</div>`;
+  app.innerHTML = h;
+}
+
+W.onEvent('chatDataChanged', () => { note = ''; draw() });
+draw();
+W.ready();
+</script>

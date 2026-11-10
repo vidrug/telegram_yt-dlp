@@ -6,7 +6,6 @@ import secrets
 import time
 from html import escape
 
-import yt_dlp
 from aiogram import F
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramAPIError
@@ -21,6 +20,7 @@ from aiogram.types import (
 
 from bot.callbacks import (
     CancelCallback,
+    ClassicCallback,
     FormatCallback,
     PageCallback,
     RawFormatsCallback,
@@ -28,17 +28,15 @@ from bot.callbacks import (
     SponsorBlockCallback,
 )
 from bot.cleanup import cleanup_session_files
-from bot.config import EXTERNAL_URL, MAX_CONCURRENT_PER_USER, MAX_FILE_SIZE, log
+from bot.config import MAX_CONCURRENT_PER_USER, log
 from bot.cookies import (
-    COOKIES_INSTRUCTION,
     MAX_COOKIE_FILE_SIZE,
     delete_user_cookies,
     needs_cookies,
     save_user_cookies,
-    user_cookie_path,
     validate_cookie_file,
 )
-from bot.downloader import download_media, safe_edit, send_local_file
+from bot.downloader import progress_text, safe_edit
 from bot.formats import (
     build_format_keyboard,
     build_raw_format_table,
@@ -48,20 +46,9 @@ from bot.formats import (
     format_button_label,
     format_filesize,
 )
-from bot.state import awaiting_cookies, bot, executor, router, sessions, user_downloads, web_files
-
-
-def _find_format(s: dict, fmt_id: str) -> tuple[dict | None, str]:
-    """Найти формат по id в группах сессии. Возвращает (формат, категория).
-
-    format_id не обязан быть числовым (hls-1080, http-720p и т.п. на
-    не-YouTube сайтах), поэтому ищем по точному совпадению, а не по isdigit().
-    """
-    for cat, fmts in s["groups"].items():
-        for f in fmts:
-            if f["format_id"] == fmt_id:
-                return f, cat
-    return None, "video_audio"
+from bot.jobs import SerialUI, cookie_prompt, find_format, run_download
+from bot.state import awaiting_cookies, bot, executor, router, sessions, user_downloads
+from bot.widget import send_picker, session_caption
 
 
 @router.message(CommandStart())
@@ -77,14 +64,11 @@ async def cmd_start(message: Message) -> None:
 
 async def _ask_for_cookies(msg: Message, url: str, user_id: int) -> None:
     """Запомнить ссылку и показать инструкцию, как прислать куки."""
-    awaiting_cookies[user_id] = url
-    prefix = ""
-    if user_cookie_path(user_id).exists():
-        prefix = "⚠️ Сохранённые куки больше не работают — нужны свежие.\n\n"
+    text = cookie_prompt(user_id, url)
     try:
-        await msg.edit_text(prefix + COOKIES_INSTRUCTION, disable_web_page_preview=True)
+        await msg.edit_text(text, disable_web_page_preview=True)
     except TelegramAPIError:
-        await msg.answer(prefix + COOKIES_INSTRUCTION, disable_web_page_preview=True)
+        await msg.answer(text, disable_web_page_preview=True)
 
 
 async def _accept_cookies(message: Message, text: str) -> None:
@@ -182,25 +166,51 @@ async def _process_url(message: Message, url: str, user_id: int) -> None:
         return
 
     session_id = secrets.token_hex(4)  # 8 hex chars
-    sessions[session_id] = {
+    s = sessions[session_id] = {
         "url": url,
         "groups": groups,
         "raw_formats": info.get("formats") or [],
         "title": info.get("title", "video"),
+        "duration": info.get("duration"),
         "created": time.time(),
         "user_id": user_id,
     }
 
-    title = info.get("title", "")
-    duration = info.get("duration")
-    header = f"🎬 <b>{escape(title)}</b>"
-    if duration:
-        mins, secs = divmod(int(duration), 60)
-        header += f"\n⏱ {mins}:{secs:02d}"
-    header += f"\n\n📋 Найдено форматов: {total_formats}\nВыбери формат для скачивания:"
+    # Виджеты в продакшене работают только в личке с ботом
+    if message.chat.type == "private" and await send_picker(message.chat.id, session_id, s):
+        try:
+            await status_msg.delete()
+        except TelegramAPIError:
+            pass
+        return
 
     kb = build_format_keyboard(session_id, groups, page=0)
-    await status_msg.edit_text(header, reply_markup=kb)
+    await status_msg.edit_text(_classic_header(s), reply_markup=kb)
+
+
+def _classic_header(s: dict) -> str:
+    total = sum(len(v) for v in s["groups"].values())
+    return (
+        f"{session_caption(s)}\n\n"
+        f"📋 Найдено форматов: {total}\nВыбери формат для скачивания:"
+    )
+
+
+@router.callback_query(ClassicCallback.filter())
+async def handle_classic(callback: CallbackQuery, callback_data: ClassicCallback) -> None:
+    """Кнопка под виджетом: классическая клавиатура (для клиентов без виджетов)."""
+    sid = callback_data.session
+    s = sessions.get(sid)
+    if not s:
+        await callback.answer("⏰ Сессия истекла. Отправь ссылку заново.", show_alert=True)
+        return
+    if s["user_id"] != callback.from_user.id:
+        await callback.answer("🚫 Это не твой запрос.", show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(
+        _classic_header(s), reply_markup=build_format_keyboard(sid, s["groups"], page=0),
+    )
 
 
 @router.callback_query(lambda c: c.data == "noop")
@@ -355,7 +365,7 @@ async def handle_format_select(callback: CallbackQuery, callback_data: FormatCal
         return
 
     # Find selected format for label
-    selected_format, _ = _find_format(s, fmt_id)
+    selected_format, _ = find_format(s, fmt_id)
     if not selected_format:
         # Custom format string (e.g. bestvideo+bestaudio)
         label = fmt_id
@@ -404,6 +414,68 @@ def _build_retry_kb(sid: str, fmt_id: str, sponsorblock: bool) -> InlineKeyboard
     ])
 
 
+class TextUI(SerialUI):
+    """Ход скачивания правками обычного текстового сообщения (классический режим)."""
+
+    def __init__(self, msg: Message, sid: str, fmt_id: str, sponsorblock: bool) -> None:
+        super().__init__()
+        self.msg = msg
+        self.retry_kb = _build_retry_kb(sid, fmt_id, sponsorblock)
+
+    async def _edit(self, text: str, **kwargs) -> None:
+        try:
+            await self.msg.edit_text(text, **kwargs)
+        except TelegramAPIError as e:
+            log.warning("status edit failed: %s", e)
+
+    async def on_progress(self, d: dict) -> None:
+        await self._progress(lambda: safe_edit(self.msg, progress_text(d)))
+
+    async def on_stage(self, text: str) -> None:
+        await self._step(lambda: safe_edit(self.msg, text))
+
+    async def sending(self) -> None:
+        await self._step(lambda: self._edit("📤 Отправляю файл..."))
+
+    async def delivered(self) -> None:
+        async def delete() -> None:
+            try:
+                await self.msg.delete()
+            except TelegramAPIError:
+                pass
+        await self._step(delete)
+
+    async def big_file(self, link: str, size: int) -> None:
+        await self._step(lambda: self._edit(
+            f"📦 Файл слишком большой для Telegram ({format_filesize(size)}).\n\n"
+            f"⬇️ <a href=\"{escape(link)}\">Скачать файл</a>\n\n"
+            f"Ссылка действует 8 часов.",
+        ))
+
+    async def missing_file(self) -> None:
+        await self._step(lambda: self._edit("❌ Ошибка: файл не найден после скачивания."))
+
+    async def failed(self, error: Exception, resumable: bool) -> None:
+        err_short = escape(str(error)[:200])
+        if resumable:
+            text = (
+                f"❌ Ошибка скачивания:\n<code>{err_short}</code>\n\n"
+                "Частичный файл сохранён. Нажми «Повторить» — скачивание продолжится с места остановки."
+            )
+        else:
+            text = (
+                f"❌ Произошла ошибка:\n<code>{err_short}</code>\n\n"
+                "Нажми «Повторить» для возобновления скачивания."
+            )
+        await self._step(lambda: self._edit(text, reply_markup=self.retry_kb))
+
+    async def need_cookies(self, url: str, user_id: int) -> None:
+        await self._step(lambda: _ask_for_cookies(self.msg, url, user_id))
+
+    async def cancelled(self) -> None:
+        await self._step(lambda: self._edit("❌ Отменено."))
+
+
 async def _execute_download(
     callback: CallbackQuery,
     sid: str,
@@ -411,107 +483,17 @@ async def _execute_download(
     sponsorblock: bool,
     s: dict,
     progress_msg: Message,
-    is_retry: bool = False,
 ) -> None:
     """Common download logic for both initial download and retry."""
-    user_id = callback.from_user.id
-
-    # Determine format category
-    selected_format, cat_label = _find_format(s, fmt_id)
-    category = cat_label if selected_format else "custom"
-
-    current = user_downloads.get(user_id, 0)
-    user_downloads[user_id] = current + 1
-    loop = asyncio.get_running_loop()
-    success = False
-
-    try:
-        file_path = await loop.run_in_executor(
-            executor,
-            download_media,
-            s["url"],
-            fmt_id,
-            sid,
-            category,
-            sponsorblock,
-            loop,
-            progress_msg,
-            user_id,
-        )
-
-        if not file_path.exists():
-            await progress_msg.edit_text("❌ Ошибка: файл не найден после скачивания.")
-            return
-
-        file_size = file_path.stat().st_size
-        title = s.get("title", "video")
-
-        if file_size > MAX_FILE_SIZE:
-            # File too large for Telegram — serve via web
-            filename = f"{title}.{file_path.suffix.lstrip('.')}"
-            web_files[sid] = {
-                "path": file_path,
-                "created": time.time(),
-                "filename": filename,
-            }
-            ext = file_path.suffix  # e.g. ".mp4"
-            link = f"{EXTERNAL_URL}/dl/{sid}{ext}"
-            await progress_msg.edit_text(
-                f"📦 Файл слишком большой для Telegram "
-                f"({format_filesize(file_size)}).\n\n"
-                f"⬇️ <a href=\"{link}\">Скачать файл</a>\n\n"
-                f"Ссылка действует 8 часов.",
-            )
-            sessions.pop(sid, None)
-            success = True
-            return
-
-        await progress_msg.edit_text("📤 Отправляю файл...")
-
-        await send_local_file(
-            callback.message.chat.id, file_path, title, cat_label,
-        )
-
-        await progress_msg.delete()
-        success = True
-
-    except yt_dlp.utils.DownloadError as e:
-        log.warning("Download error for session %s: %s", sid, e)
-        if needs_cookies(e):
-            await _ask_for_cookies(progress_msg, s["url"], user_id)
-            return
-        retry_kb = _build_retry_kb(sid, fmt_id, sponsorblock)
-        err_short = escape(str(e)[:200])
-        try:
-            await progress_msg.edit_text(
-                f"❌ Ошибка скачивания:\n<code>{err_short}</code>\n\n"
-                "Частичный файл сохранён. Нажми «Повторить» — скачивание продолжится с места остановки.",
-                reply_markup=retry_kb,
-            )
-        except Exception:
-            pass
-        # DON'T cleanup files — keep .part for resume
-        # DON'T remove session — needed for retry
-        return
-    except Exception as e:
-        log.exception("Download/send error for session %s", sid)
-        retry_kb = _build_retry_kb(sid, fmt_id, sponsorblock)
-        err_short = escape(str(e)[:200])
-        try:
-            await progress_msg.edit_text(
-                f"❌ Произошла ошибка:\n<code>{err_short}</code>\n\n"
-                "Нажми «Повторить» для возобновления скачивания.",
-                reply_markup=retry_kb,
-            )
-        except Exception:
-            pass
-        return
-    finally:
-        user_downloads[user_id] = max(0, user_downloads.get(user_id, 1) - 1)
-        if success:
-            if sid not in web_files:
-                cleanup_session_files(sid)
-            sessions.pop(sid, None)
+    await run_download(
+        TextUI(progress_msg, sid, fmt_id, sponsorblock),
+        chat_id=callback.message.chat.id,
+        user_id=callback.from_user.id,
+        sid=sid,
+        s=s,
+        fmt_id=fmt_id,
+        sponsorblock=sponsorblock,
+    )
 
 
 @router.callback_query(SponsorBlockCallback.filter())
@@ -540,7 +522,7 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
     await callback.answer()
 
     # Build label for progress message
-    selected_format, _ = _find_format(s, fmt_id)
+    selected_format, _ = find_format(s, fmt_id)
     label = format_button_label(selected_format) if selected_format else fmt_id
     sb_text = " | SponsorBlock ✅" if sponsorblock else ""
 
@@ -577,7 +559,7 @@ async def handle_retry(callback: CallbackQuery, callback_data: RetryCallback) ->
     await callback.answer()
 
     # Build label
-    selected_format, _ = _find_format(s, fmt_id)
+    selected_format, _ = find_format(s, fmt_id)
     label = format_button_label(selected_format) if selected_format else fmt_id
     sb_text = " | SponsorBlock" if sponsorblock else ""
 
@@ -585,4 +567,4 @@ async def handle_retry(callback: CallbackQuery, callback_data: RetryCallback) ->
         f"🔄 Возобновляю скачивание: {escape(label)}{sb_text}\n\nПодготовка..."
     )
 
-    await _execute_download(callback, sid, fmt_id, sponsorblock, s, progress_msg, is_retry=True)
+    await _execute_download(callback, sid, fmt_id, sponsorblock, s, progress_msg)

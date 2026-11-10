@@ -13,6 +13,9 @@ from bot.web import create_web_app
 # Import handlers to register them on the router
 from bot import status  # noqa: F401  # команды владельца — ДО handlers: их catch-all регулярка иначе перехватит /status
 from bot import provision  # noqa: F401  # /config — выдача и создание доступов
+# widget (скачивание) — ДО widgets (панель): его middleware забирает только свои widget_query
+# и пропускает остальные дальше, а middleware панели забирает все, что до неё дошли
+from bot import widget  # noqa: F401  # выбор формата и прогресс в виджете (Bot API 10.4)
 from bot import widgets  # noqa: F401  # /panel — живая панель-виджет (Bot API 10.4)
 from bot import handlers  # noqa: F401
 
@@ -31,6 +34,7 @@ async def on_startup() -> None:
 
     await bot.delete_webhook(drop_pending_updates=True)
     await status.register_owner_commands()
+    await widget.probe()
     asyncio.create_task(periodic_cleanup())
     asyncio.create_task(session_cleanup())
     asyncio.create_task(periodic_ytdlp_update())
