@@ -1,14 +1,7 @@
 """Format helpers: classification, labels, keyboard building, raw table."""
 
 import yt_dlp
-from aiogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputRichBlockTable,
-    RichBlockTableCell,
-    RichTextBold,
-    RichTextCode,
-)
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.callbacks import (
     CancelCallback,
@@ -62,6 +55,56 @@ def format_button_label(f: dict) -> str:
         parts.append(f"{fps}fps")
     parts.append(format_filesize(size))
     return " | ".join(parts)
+
+
+CODEC_ORDER = ["H.264", "HEVC", "VP9", "AV1", "VP8"]
+
+
+def fmt_bytes(f: dict) -> int:
+    return f.get("filesize") or f.get("filesize_approx") or 0
+
+
+def video_quality(f: dict) -> str:
+    height, fps = f.get("height"), f.get("fps")
+    if height:
+        return f"{height}p{int(fps) if fps and fps > 30 else ''}"
+    return f.get("format_note") or f.get("resolution") or str(f["format_id"])
+
+
+def codec_name(f: dict) -> str:
+    vcodec = str(f.get("vcodec") or "").lower()
+    for prefix, name in (("avc", "H.264"), ("h264", "H.264"), ("hev", "HEVC"), ("hvc", "HEVC"),
+                         ("h265", "HEVC"), ("vp09", "VP9"), ("vp9", "VP9"), ("vp8", "VP8"), ("av01", "AV1")):
+        if vcodec.startswith(prefix):
+            return name
+    return (f.get("ext") or "?").upper()  # сайты без сведений о кодеке (VK, Instagram)
+
+
+def audio_label(f: dict) -> str:
+    acodec = str(f.get("acodec") or "").lower()
+    family = next((name for prefix, name in (
+        ("mp4a", "AAC"), ("opus", "Opus"), ("vorbis", "Vorbis"), ("mp3", "MP3"),
+        ("ac-3", "AC3"), ("ec-3", "EAC3"), ("flac", "FLAC"),
+    ) if acodec.startswith(prefix)), (f.get("ext") or "?").upper())
+    abr = f.get("abr") or f.get("tbr")
+    return f"{family} {round(abr)}k" if abr else family
+
+
+def pair_selector(
+    video_id: str | None, video_label: str, muxed: bool, audio_id: str | None, audio_name: str,
+) -> tuple[str, str, str] | None:
+    """Выбранные видео/звук -> (селектор yt-dlp, как отправить файл, подпись)."""
+    if video_id is not None and muxed:
+        return f"{video_id}/best", "video_audio", f"{video_label} со звуком"
+    if video_id is not None and audio_id is not None:
+        # фолбэки — на случай, если id сменился между показом таблицы и скачиванием
+        return (f"{video_id}+{audio_id}/{video_id}+bestaudio/bestvideo*+bestaudio/best",
+                "video_audio", f"{video_label} + {audio_name}")
+    if video_id is not None:
+        return f"{video_id}/bestvideo*", "video_only", f"{video_label} без звука"
+    if audio_id is not None:
+        return f"{audio_id}/bestaudio/best", "audio_only", f"Звук · {audio_name}"
+    return None
 
 
 def extract_formats(url: str, user_id: int | None = None) -> dict:
@@ -130,62 +173,6 @@ def build_raw_format_table(formats: list[dict]) -> str:
             f"{fid:<6}{ext:<6}{res:<12}{fps_s:<5}{vcodec:<10}{acodec:<8}{size:<9}{note}"
         )
     return "\n".join(lines)
-
-
-RICH_TABLE_MAX_ROWS = 50  # строк данных на одно сообщение
-
-
-def build_rich_format_tables(formats: list[dict]) -> list[InputRichBlockTable]:
-    """Build native Telegram tables (Bot API 10.3+) for the format list.
-
-    Возвращает несколько таблиц, если форматов больше RICH_TABLE_MAX_ROWS —
-    каждая отправляется отдельным сообщением.
-    """
-    def cell(text, align: str = "left", header: bool = False) -> RichBlockTableCell:
-        return RichBlockTableCell(
-            align=align, valign="middle", text=text, is_header=header or None,
-        )
-
-    header_row = [
-        cell(RichTextBold(text=col), align, header=True)
-        for col, align in (
-            ("ID", "left"), ("EXT", "left"), ("RES", "left"),
-            ("FPS", "right"), ("CODEC", "left"), ("SIZE", "right"),
-        )
-    ]
-
-    rows = []
-    for f in formats:
-        fid = str(f.get("format_id", "?"))
-        vcodec = (f.get("vcodec") or "none").split(".")[0]
-        acodec = (f.get("acodec") or "none").split(".")[0]
-        if vcodec != "none" and acodec != "none":
-            codec = f"{vcodec}+{acodec}"
-        elif vcodec != "none":
-            codec = vcodec
-        elif acodec != "none":
-            codec = acodec
-        else:
-            codec = "?"
-        fps = f.get("fps")
-        rows.append([
-            cell(RichTextCode(text=fid)),
-            cell(f.get("ext", "?")),
-            cell(f.get("resolution") or f.get("format_note") or "?"),
-            cell(str(int(fps)) if fps else "-", align="right"),
-            cell(codec),
-            cell(format_filesize(f.get("filesize") or f.get("filesize_approx")), align="right"),
-        ])
-
-    return [
-        InputRichBlockTable(
-            cells=[header_row] + rows[i:i + RICH_TABLE_MAX_ROWS],
-            is_bordered=True,
-            is_striped=True,
-            is_compact=True,
-        )
-        for i in range(0, len(rows), RICH_TABLE_MAX_ROWS)
-    ]
 
 
 def build_format_keyboard(

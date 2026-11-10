@@ -147,7 +147,8 @@ def download_media(
     ydl_opts = {
         "format": fmt,
         "outtmpl": out_template,
-        "merge_output_format": "mp4" if category in ("video_only", "pair") else None,
+        # склеенные пары — в MP4: его Telegram проигрывает прямо в чате (MKV — нет)
+        "merge_output_format": "mp4" if category in ("video_only", "pair") or "+" in fmt else None,
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,  # консольный прогресс yt-dlp засорял логи контейнера

@@ -32,7 +32,15 @@ from bot.callbacks import ClassicCallback, RawFormatsCallback
 from bot.config import MAX_CONCURRENT_PER_USER, USE_WIDGETS, log
 from bot.cookies import is_youtube
 from bot.downloader import progress_info
-from bot.formats import format_filesize
+from bot.formats import (
+    CODEC_ORDER,
+    audio_label,
+    codec_name,
+    fmt_bytes,
+    format_filesize,
+    pair_selector,
+    video_quality,
+)
 from bot.jobs import SerialUI, cookie_prompt, run_download
 from bot.state import bot, dp, sessions, user_downloads, widget_sessions
 
@@ -40,7 +48,6 @@ MAX_DATA_BYTES = 1024  # chat_data и ответ на запрос
 MAX_TABLE_ROWS = 9     # с блоком звука и кнопкой — в пределах ~560 px высоты
 MAX_TABLE_COLS = 4
 MAX_AUDIO = 5
-CODEC_ORDER = ["H.264", "HEVC", "VP9", "AV1", "VP8"]
 
 
 # ---------------------------------------------------------------------------
@@ -138,15 +145,8 @@ async def _answer(query_id: str, error: str | None = None) -> None:
 # Список форматов для виджета
 # ---------------------------------------------------------------------------
 
-def _bytes(f: dict) -> int:
-    return f.get("filesize") or f.get("filesize_approx") or 0
 
 
-def _video_quality(f: dict) -> str:
-    height, fps = f.get("height"), f.get("fps")
-    if height:
-        return f"{height}p{int(fps) if fps and fps > 30 else ''}"
-    return f.get("format_note") or f.get("resolution") or str(f["format_id"])
 
 
 def _video_rank(f: dict, prefer_separate: bool) -> tuple:
@@ -154,29 +154,14 @@ def _video_rank(f: dict, prefer_separate: bool) -> tuple:
     # звук на выбор, затем известный размер (не HLS) и битрейт.
     return (
         (f.get("acodec") in (None, "none")) == prefer_separate,
-        _bytes(f) > 0,
+        fmt_bytes(f) > 0,
         not str(f.get("protocol") or "").startswith("m3u8"),
         f.get("tbr") or 0,
     )
 
 
-def _codec(f: dict) -> str:
-    vcodec = str(f.get("vcodec") or "").lower()
-    for prefix, name in (("avc", "H.264"), ("h264", "H.264"), ("hev", "HEVC"), ("hvc", "HEVC"),
-                         ("h265", "HEVC"), ("vp09", "VP9"), ("vp9", "VP9"), ("vp8", "VP8"), ("av01", "AV1")):
-        if vcodec.startswith(prefix):
-            return name
-    return (f.get("ext") or "?").upper()  # сайты без сведений о кодеке (VK, Instagram)
 
 
-def _audio_label(f: dict) -> str:
-    acodec = str(f.get("acodec") or "").lower()
-    family = next((name for prefix, name in (
-        ("mp4a", "AAC"), ("opus", "Opus"), ("vorbis", "Vorbis"), ("mp3", "MP3"),
-        ("ac-3", "AC3"), ("ec-3", "EAC3"), ("flac", "FLAC"),
-    ) if acodec.startswith(prefix)), (f.get("ext") or "?").upper())
-    abr = f.get("abr") or f.get("tbr")
-    return f"{family} {round(abr)}k" if abr else family
 
 
 class VideoCell(NamedTuple):
@@ -203,11 +188,11 @@ def _audio_options(groups: dict[str, list[dict]]) -> list[AudioOpt]:
     for f in sorted(fmts, key=lambda f: f.get("abr") or f.get("tbr") or 0, reverse=True):
         if (f.get("language_preference") or -1) != top_lang:
             continue
-        label = _audio_label(f)
+        label = audio_label(f)
         if label in seen:
             continue
         seen.add(label)
-        out.append(AudioOpt(str(f["format_id"]), label, _bytes(f)))
+        out.append(AudioOpt(str(f["format_id"]), label, fmt_bytes(f)))
         if len(out) >= MAX_AUDIO:
             break
     return out
@@ -227,7 +212,7 @@ def build_table(groups: dict[str, list[dict]], max_rows: int = MAX_TABLE_ROWS) -
 
     best: dict[tuple[str, str], dict] = {}
     for f in candidates:
-        key = (_video_quality(f), _codec(f))
+        key = (video_quality(f), codec_name(f))
         if key not in best or _video_rank(f, bool(audio)) > _video_rank(best[key], bool(audio)):
             best[key] = f
 
@@ -246,7 +231,7 @@ def build_table(groups: dict[str, list[dict]], max_rows: int = MAX_TABLE_ROWS) -
             f = best.get((quality, codec))
             if f:
                 muxed = f.get("acodec") not in (None, "none") or not audio
-                video.append(VideoCell(str(f["format_id"]), ri, ci, _bytes(f), muxed))
+                video.append(VideoCell(str(f["format_id"]), ri, ci, fmt_bytes(f), muxed))
 
     # по умолчанию — лучшее H.264 + AAC: так Telegram проигрывает файл прямо в чате
     dv = next((i for i, v in enumerate(video) if cols[v.col] == "H.264"), 0 if video else None)
@@ -288,19 +273,10 @@ def selection(t: dict, vi: int | None, ai: int | None) -> tuple[str, str, str] |
     """Индексы из виджета -> (селектор yt-dlp, как отправить файл, подпись)."""
     v = t["video"][vi] if vi is not None else None
     a = t["audio"][ai] if ai is not None and not (v and v.muxed) else None
-    if v is None and a is None:
-        return None
-    if v:
-        vlabel = f"{t['rows'][v.row]} {t['cols'][v.col]}"
-    if v and v.muxed:
-        return f"{v.fmt_id}/best", "video_audio", f"{vlabel} со звуком"
-    if v and a:
-        # фолбэки — на случай, если id сменился между показом таблицы и скачиванием
-        return (f"{v.fmt_id}+{a.fmt_id}/{v.fmt_id}+bestaudio/bestvideo*+bestaudio/best",
-                "video_audio", f"{vlabel} + {a.label}")
-    if v:
-        return f"{v.fmt_id}/bestvideo*", "video_only", f"{vlabel} без звука"
-    return f"{a.fmt_id}/bestaudio/best", "audio_only", f"Звук · {a.label}"
+    return pair_selector(
+        v.fmt_id if v else None, f"{t['rows'][v.row]} {t['cols'][v.col]}" if v else "",
+        bool(v and v.muxed), a.fmt_id if a else None, a.label if a else "",
+    )
 
 
 def session_caption(s: dict) -> str:

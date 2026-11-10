@@ -9,7 +9,6 @@ from html import escape
 from aiogram import F
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InputRichMessage
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -18,10 +17,12 @@ from aiogram.types import (
     Message,
 )
 
+from bot import fulltable
 from bot.callbacks import (
     CancelCallback,
     ClassicCallback,
     FormatCallback,
+    FullPickCallback,
     PageCallback,
     RawFormatsCallback,
     RetryCallback,
@@ -40,7 +41,6 @@ from bot.downloader import progress_text, safe_edit
 from bot.formats import (
     build_format_keyboard,
     build_raw_format_table,
-    build_rich_format_tables,
     extract_formats,
     filter_and_group,
     format_button_label,
@@ -257,14 +257,17 @@ async def handle_raw_formats(callback: CallbackQuery, callback_data: RawFormatsC
     await callback.answer()
 
     raw = s.get("raw_formats", [])
+    s["awaiting_format"] = True  # ручной ввод формата текстом работает и при таблице
 
     try:
-        # Нативные таблицы (Bot API 10.3+)
-        for table_block in build_rich_format_tables(raw):
-            await bot.send_rich_message(
-                chat_id=callback.message.chat.id,
-                rich_message=InputRichMessage(blocks=[table_block]),
-            )
+        # Интерактивная нативная таблица (Bot API 10.3+): ID формата — кнопка
+        fulltable.prepare(s)
+        table_msg = await bot.send_rich_message(
+            chat_id=callback.message.chat.id,
+            rich_message=fulltable.render(sid, s),
+        )
+        s["full_msg"] = table_msg.message_id
+        return
     except TelegramAPIError as e:
         # Локальный bot-api сервер без Bot API 10.3 — откат на <pre>-таблицу
         log.warning("send_rich_message failed (%s), falling back to <pre> table", e)
@@ -288,7 +291,6 @@ async def handle_raw_formats(callback: CallbackQuery, callback_data: RawFormatsC
                 text=f"<pre>{chunk}</pre>",
             )
 
-    s["awaiting_format"] = True
     await bot.send_message(
         chat_id=callback.message.chat.id,
         text=(
@@ -299,6 +301,63 @@ async def handle_raw_formats(callback: CallbackQuery, callback_data: RawFormatsC
             "Или отправь новую ссылку для отмены."
         ),
     )
+
+
+@router.callback_query(FullPickCallback.filter())
+async def handle_full_pick(callback: CallbackQuery, callback_data: FullPickCallback) -> None:
+    """Тапы по полной таблице «Все форматы»: выбор видео/звука, SponsorBlock, скачать."""
+    sid = callback_data.session
+    s = sessions.get(sid)
+    if not s or "full" not in s:
+        await callback.answer("⏰ Сессия истекла. Отправь ссылку заново.", show_alert=True)
+        return
+    user_id = callback.from_user.id
+    if s["user_id"] != user_id:
+        await callback.answer("🚫 Это не твой запрос.", show_alert=True)
+        return
+
+    if callback_data.act == "go":
+        chosen = fulltable.selection(s)
+        if not chosen:
+            await callback.answer("Выбери видео и/или звук", show_alert=True)
+            return
+        if user_downloads.get(user_id, 0) >= MAX_CONCURRENT_PER_USER:
+            await callback.answer(
+                f"⏳ Макс. {MAX_CONCURRENT_PER_USER} параллельных скачивания. Подожди.",
+                show_alert=True,
+            )
+            return
+        await callback.answer()
+        selector, send_as, label = chosen
+        sponsorblock = s["full_sel"]["sb"]
+        text = f"⬇️ Скачиваю: {escape(label)}{' | SponsorBlock ✅' if sponsorblock else ''}\n\nПодготовка..."
+        # с таблицы — новое сообщение (таблица остаётся для следующего выбора), с «Повторить» — то же
+        if callback.message.message_id == s.get("full_msg"):
+            progress_msg = await callback.message.answer(text)
+        else:
+            progress_msg = await callback.message.edit_text(text)
+        retry_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Повторить скачивание",
+                                  callback_data=FullPickCallback(session=sid, act="go").pack())],
+        ])
+        await run_download(
+            TextUI(progress_msg, sid, selector, sponsorblock, retry_kb=retry_kb),
+            chat_id=callback.message.chat.id, user_id=user_id, sid=sid, s=s,
+            fmt_id=selector, sponsorblock=sponsorblock, keep_session=True,
+            category="pair", send_as=send_as,
+        )
+        return
+
+    hint = fulltable.toggle(s, callback_data.act, callback_data.idx)
+    if hint:
+        await callback.answer(hint, show_alert=True)
+        return
+    await callback.answer()
+    try:
+        await callback.message.edit_text(rich_message=fulltable.render(sid, s))
+    except TelegramAPIError as e:
+        if "message is not modified" not in str(e):
+            log.warning("full table edit failed: %s", e)
 
 
 # (?!/) — не перехватывать команды (/status и т.п.): слэш допустим только внутри
@@ -417,10 +476,11 @@ def _build_retry_kb(sid: str, fmt_id: str, sponsorblock: bool) -> InlineKeyboard
 class TextUI(SerialUI):
     """Ход скачивания правками обычного текстового сообщения (классический режим)."""
 
-    def __init__(self, msg: Message, sid: str, fmt_id: str, sponsorblock: bool) -> None:
+    def __init__(self, msg: Message, sid: str, fmt_id: str, sponsorblock: bool,
+                 retry_kb: InlineKeyboardMarkup | None = None) -> None:
         super().__init__()
         self.msg = msg
-        self.retry_kb = _build_retry_kb(sid, fmt_id, sponsorblock)
+        self.retry_kb = retry_kb or _build_retry_kb(sid, fmt_id, sponsorblock)
 
     async def _edit(self, text: str, **kwargs) -> None:
         try:

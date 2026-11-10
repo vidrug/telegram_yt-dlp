@@ -36,3 +36,11 @@ class RetryCallback(CallbackData, prefix="rt"):
 class ClassicCallback(CallbackData, prefix="kb"):
     """Показать классическую клавиатуру форматов вместо виджета (старые клиенты)."""
     session: str
+
+
+class FullPickCallback(CallbackData, prefix="fp"):
+    """Полная таблица «Все форматы»: v/a — выбрать дорожку idx, go — скачать,
+    sb — SponsorBlock, clr — сбросить выбор."""
+    session: str
+    act: str
+    idx: int = -1
