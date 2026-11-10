@@ -20,22 +20,30 @@ body{margin:0;padding:10px 12px}
 .w:after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s}
 .w.on{background:var(--tg-theme-button-color)}
 .w.on:after{transform:translateX(18px)}
-/* полоска в духе codepen.io/evawythien/pen/jegRxN: утопленная дорожка, блик, бегущие полосы.
-   Родной рендерер Telegram не анимирует background-position, поэтому всё движение — transform
-   отдельных слоёв, а разметка полоски постоянная (иначе transition ширины не срабатывает). */
-.b{position:relative;height:14px;padding:3px;margin:10px 0 6px;border-radius:10px;overflow:hidden;background:rgba(0,0,0,.07);box-shadow:inset 0 1px 2px rgba(0,0,0,.14)}
-@media (prefers-color-scheme:dark){.b{background:rgba(0,0,0,.25);box-shadow:inset 0 1px 2px rgba(0,0,0,.25),0 1px rgba(255,255,255,.08)}}
-#jf{position:relative;width:0;height:100%;min-width:14px;border-radius:7px;overflow:hidden;background:#4cd964;transition:width 2.8s linear}
-.gl,.sp,.rw,.rb{position:absolute;top:0;left:0;width:100%;height:100%}
-.gl{background:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.05))}
-/* плитку (background-size) движок не повторяет — полосы рисует один градиент на всю длину (см. STRIPES) */
-.sp{left:-28px;width:calc(100% + 28px);animation:sp .9s linear infinite}
-@keyframes sp{from{transform:translateX(0)}to{transform:translateX(28px)}}
-/* радуга из примера — и в заливке, и на этапах без процента: слой двойной ширины пузыря (vw)
-   с повтором цветов едет на половину; цвета не сжимаются, растущая полоска открывает их больше */
-.rw{top:3px;left:3px;width:calc(100% - 6px);height:calc(100% - 6px);border-radius:7px;overflow:hidden}
-.rb{width:200vw;background:linear-gradient(90deg,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964);animation:rb 2.5s linear infinite}
-@keyframes rb{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+/* прогресс в стиле Cyberpunk 2077 (codepen.io/stevenlei/pen/ZEpyBod): красная полоса со срезанным
+   углом и жёсткой голубой тенью, глитч — дёргающиеся срезы и мигание. clip-path и text-shadow
+   песочница вырезает, background-position не анимирует — всё движение только transform + steps() */
+.b{position:relative;height:12px;padding:3px;margin:10px 0 6px;background:#12121c;border:1px solid rgba(0,230,246,.45);overflow:hidden}
+#jf{position:relative;width:0;height:100%;min-width:12px;background:linear-gradient(-45deg,rgba(255,1,60,0) 6px,#ff013c 6px);box-shadow:3px 0 0 #00e6f6;transition:width 2.8s linear;animation:fl 3.2s steps(1,end) infinite}
+/* этапы без процента — бегущая жёлто-чёрная лента (градиент с явными точками, см. HAZARD) */
+.rw{position:absolute;top:3px;left:3px;width:calc(100% - 6px);height:calc(100% - 6px);overflow:hidden;animation:fl 3.2s steps(1,end) infinite}
+.hz{position:absolute;top:0;left:-28px;width:calc(100% + 28px);height:100%;animation:hz .9s linear infinite}
+@keyframes hz{from{transform:translateX(0)}to{transform:translateX(28px)}}
+/* исчезание: полоса схлопывается и прыгает в сторону */
+@keyframes fl{0%{transform:none}89%{transform:scaleY(0)}90%{transform:translateX(5px)}93%{transform:scaleY(0)}95%{transform:translateX(-4px)}97%{transform:none}}
+/* глитч-срезы: в покое спрятаны слева за краем дорожки */
+.g1,.g2{position:absolute;left:0;width:100%;transform:translateX(-200%)}
+.g1{top:1px;height:3px;background:#00e6f6;animation:g1 3.2s steps(1,end) infinite}
+.g2{bottom:1px;height:2px;background:#f8f005;animation:g2 3.2s steps(1,end) infinite}
+@keyframes g1{0%{transform:translateX(-200%)}87%{transform:translateX(8px)}91%{transform:translateX(-6px)}94%{transform:translateX(-200%)}}
+@keyframes g2{0%{transform:translateX(-200%)}90%{transform:translateX(-9px)}92%{transform:translateX(6px)}96%{transform:translateX(-200%)}}
+/* текст статуса двоится голубым и красным в такт глитчу (копии из data-t) */
+.gt{position:relative}
+.gt:before,.gt:after{content:attr(data-t);position:absolute;top:0;left:0;white-space:nowrap;transform:translateX(-200vw)}
+.gt:before{color:#00e6f6;animation:t1 3.2s steps(1,end) infinite}
+.gt:after{color:#ff013c;animation:t2 3.2s steps(1,end) infinite}
+@keyframes t1{0%{transform:translateX(-200vw)}88%{transform:translate(-3px,-1px)}91%{transform:translate(2px,1px)}94%{transform:translateX(-200vw)}}
+@keyframes t2{0%{transform:translateX(-200vw)}89%{transform:translate(3px,1px)}93%{transform:translate(-2px,0)}95%{transform:translateX(-200vw)}}
 .a{display:flex;gap:8px;margin-top:10px}
 .a button{flex:1}
 </style>
@@ -96,14 +104,13 @@ function pick(s) {
   return h;
 }
 
-// Косые полосы одним градиентом с явными точками: период вдоль линии 45° — 28/√2 px,
-// то есть 28 px по горизонтали, ровно на столько их сдвигает анимация sp.
-// Пустая полоса — прозрачный БЕЛЫЙ: transparent = rgba(0,0,0,0), и движок Telegram тянул полосы в чёрное
-const STRIPES = (() => {
-  const P = 28 / Math.SQRT2, c = 'rgba(255,255,255,.22)', z = 'rgba(255,255,255,0)', g = [];
+// Лента опасности одним градиентом с явными точками (плитку движок не повторяет): период вдоль
+// линии 45° — 28/√2 px, то есть 28 px по горизонтали, ровно на столько её сдвигает анимация hz
+const HAZARD = (() => {
+  const P = 28 / Math.SQRT2, a = '#f8f005', z = '#12121c', g = [];
   for (let i = 0; i < 48; i++) {
-    const a = (i * P).toFixed(1), b = (i * P + P / 2).toFixed(1), e = ((i + 1) * P).toFixed(1);
-    g.push(`${c} ${a}px`, `${c} ${b}px`, `${z} ${b}px`, `${z} ${e}px`);
+    const x = (i * P).toFixed(1), y = (i * P + P / 2).toFixed(1), e = ((i + 1) * P).toFixed(1);
+    g.push(`${a} ${x}px`, `${a} ${y}px`, `${z} ${y}px`, `${z} ${e}px`);
   }
   return `linear-gradient(45deg,${g.join(',')})`;
 })();
@@ -117,14 +124,15 @@ function job(s) {
   if (mode != 'job') {
     mode = 'job'; lastB = null;
     app.innerHTML = '<div class="q" id="jl"></div><div id="jt"></div>'
-      + '<div class="b" id="jb"><div class="rw" id="jr"><span class="rb"></span><span class="gl"></span></div>'
-      + '<div id="jf"><span class="rb"></span><span class="sp" id="js"></span><span class="gl"></span></div></div>'
+      + '<div class="b" id="jb"><div class="rw" id="jr"><span class="hz" id="jh"></span></div>'
+      + '<div id="jf"><span class="g1"></span><span class="g2"></span></div></div>'
       + '<div class="n" id="jd"></div><div class="a" id="ja"></div><div id="jn" style="margin-top:6px"></div>';
-    $('js').style.backgroundImage = STRIPES;
+    $('jh').style.backgroundImage = HAZARD;
   }
   $('jl').textContent = s.l || '';
-  $('jt').className = s.k || 'n';
+  $('jt').className = (s.k || 'n') + ' gt';
   $('jt').textContent = s.t || '';
+  $('jt').setAttribute('data-t', s.t || '');  // копии текста для глитча
   show('jb', s.p != null);
   if (s.p != null) {
     const ind = s.p < 0;
