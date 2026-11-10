@@ -88,7 +88,7 @@ def download_media(
     url: str,
     format_id: str,
     session_id: str,
-    category: str,  # video_audio | video_only | audio_only | custom
+    category: str,  # video_audio | video_only | audio_only | custom | pair
     sponsorblock: bool,
     loop: asyncio.AbstractEventLoop,
     progress: ProgressSink,
@@ -109,7 +109,8 @@ def download_media(
     # фолбэки на ближайшую альтернативу; ручной ввод — как есть.
     if format_id == "best":
         fmt = "bestvideo*+bestaudio/best"
-    elif category == "custom":
+    elif category in ("custom", "pair"):
+        # pair — готовый селектор с фолбэками из виджета (bot/widget.py: selection)
         fmt = format_id
     elif category == "video_only":
         fmt = f"{format_id}+bestaudio/{format_id}/bestvideo*+bestaudio/best"
@@ -146,7 +147,7 @@ def download_media(
     ydl_opts = {
         "format": fmt,
         "outtmpl": out_template,
-        "merge_output_format": "mp4" if category == "video_only" else None,
+        "merge_output_format": "mp4" if category in ("video_only", "pair") else None,
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,  # консольный прогресс yt-dlp засорял логи контейнера

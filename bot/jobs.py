@@ -91,10 +91,19 @@ async def run_download(
     sponsorblock: bool,
     keep_session: bool = False,
     cancel: threading.Event | None = None,
+    category: str | None = None,
+    send_as: str | None = None,
 ) -> None:
-    """Скачать формат и доставить файл. Все этапы показываются через ui."""
+    """Скачать формат и доставить файл. Все этапы показываются через ui.
+
+    category="pair" — fmt_id уже готовый селектор yt-dlp (видео+звук из виджета),
+    send_as — как отправить файл (video_audio / video_only / audio_only).
+    """
     selected_format, cat_label = find_format(s, fmt_id)
-    category = cat_label if selected_format else "custom"
+    if category is None:
+        category = cat_label if selected_format else "custom"
+    if send_as is not None:
+        cat_label = send_as
 
     user_downloads[user_id] = user_downloads.get(user_id, 0) + 1
     loop = asyncio.get_running_loop()

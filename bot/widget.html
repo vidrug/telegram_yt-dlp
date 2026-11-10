@@ -6,11 +6,16 @@
 -->
 <style>
 body{margin:0;padding:10px 12px}
-.t{display:flex;gap:6px;margin-bottom:8px}
-.t button{flex:1;padding:6px}
-.t button:not(.on){background:var(--tg-theme-secondary-bg-color);color:var(--tg-theme-text-color)}
-.r{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;margin-bottom:6px;border-radius:12px;background:var(--tg-theme-secondary-bg-color)}
-.r:active{background:var(--tg-theme-section-separator-color)}
+table{width:100%;border-collapse:collapse;font-size:.9em;margin:0}
+th,td{padding:6px 4px;text-align:center}
+th{color:var(--tg-theme-hint-color);font-weight:500}
+td.q{text-align:left;font-weight:600}
+td.c{border-radius:8px}
+.on{background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color)}
+.h{color:var(--tg-theme-hint-color);font-size:.85em;margin:10px 0 6px}
+.ch{display:inline-block;padding:5px 10px;margin:0 6px 6px 0;border-radius:14px;background:var(--tg-theme-secondary-bg-color)}
+.ch.on{background:var(--tg-theme-button-color)}
+.ch.off{color:var(--tg-theme-hint-color)}
 .q{font-weight:600}
 .m,.n{color:var(--tg-theme-hint-color);font-size:.85em}
 .e{color:var(--tg-theme-destructive-text-color)}
@@ -30,10 +35,11 @@ body{margin:0;padding:10px 12px}
 <div id="app"></div>
 <script>
 const W = window.TelegramWidget, app = document.getElementById('app');
-let tab = 'v', sb = 0, note = '', busy = 0;
+let sb = 0, note = '', busy = 0, vs = null, au = null, seen = '';
 try { sb = +localStorage.sb || 0 } catch (e) {}
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
+const mb = x => !x ? '?' : x >= 1000 ? (x / 1024).toFixed(1) + 'G' : x >= 10 ? Math.round(x) + 'M' : x.toFixed(1) + 'M';
 
 function state() {
   try { return JSON.parse(W.chatData) || {} } catch (e) { return {} }
@@ -56,8 +62,6 @@ function ask(data) {
 
 // Данные кнопок берём из состояния по индексу, а не вписываем в атрибут onclick
 function act(i) { ask(state().b[i][1]) }
-function choose(key) { ask('d:' + key + ':' + sb) }
-function setTab(t) { tab = t; draw() }
 
 function toggleSb() {
   sb = sb ? 0 : 1;
@@ -65,22 +69,51 @@ function toggleSb() {
   draw();
 }
 
-function pick(s) {
-  const L = { v: s.v || [], a: s.a || [] };
-  const other = tab == 'v' ? 'a' : 'v';
-  if (!L[tab].length && L[other].length) tab = other;
+// Выбор видеодорожки (ячейка таблицы) и звука; повторный тап снимает выбор
+function pv(i) {
+  vs = vs === i ? null : i;
+  if (vs != null && state().v[vs][3]) au = null;  // 🔊 — звук уже внутри
+  draw();
+}
+function pa(i) {
+  const s = state();
+  if (vs != null && s.v[vs][3]) return;
+  au = au === i ? null : i;
+  draw();
+}
+function go() { ask('g:' + (vs ?? '') + ':' + (au ?? '') + ':' + sb) }
+
+function table(s) {
+  const V = s.v || [], A = s.a || [], at = {};
+  V.forEach((x, i) => at[x[0] + ',' + x[1]] = i);
+  const muxed = vs != null && V[vs][3];
   let h = '';
-  if (L.v.length && L.a.length) {
-    h += '<div class="t">' + ['v', 'a'].map(t =>
-      `<button class="${t == tab ? 'on' : ''}" onclick="setTab('${t}')">${t == 'v' ? '🎬 Видео' : '🎵 Аудио'} ${L[t].length}</button>`
-    ).join('') + '</div>';
+  if (V.length) {
+    h += '<table><tr><th></th>' + s.c.map(c => `<th>${esc(c)}</th>`).join('') + '</tr>';
+    s.r.forEach((r, ri) => {
+      h += `<tr><td class="q">${esc(r)}</td>` + s.c.map((c, ci) => {
+        const i = at[ri + ',' + ci];
+        if (i == null) return '<td class="n">—</td>';
+        return `<td class="c${i === vs ? ' on' : ''}" onclick="pv(${i})">${mb(V[i][2])}${V[i][3] ? '🔊' : ''}</td>`;
+      }).join('') + '</tr>';
+    });
+    h += '</table>';
   }
-  h += L[tab].map((o, i) =>
-    `<div class="r" onclick="choose('${tab}${i}')"><span class="q">${esc(o[0])}</span><span class="m">${esc(o[1])}</span></div>`
-  ).join('');
+  if (A.length) {
+    h += '<div class="h">Звук</div>' + A.map((a, i) =>
+      `<span class="ch${i === au ? ' on' : ''}${muxed ? ' off' : ''}" onclick="pa(${i})">${esc(a[0])} · ${mb(a[1])}</span>`
+    ).join('');
+  }
+  const parts = [];
+  let size = 0;
+  if (vs != null) { const x = V[vs]; parts.push(s.r[x[0]] + ' ' + s.c[x[1]] + (x[3] ? ' со звуком' : au == null ? ' без звука' : '')); size += x[2] }
+  if (au != null && !muxed) { parts.push(A[au][0]); size += A[au][1] }
+  const what = (vs == null ? 'Только звук: ' : '') + parts.join(' + ');
+  h += `<div class="n" style="margin-top:4px">${parts.length ? esc(what) + (size ? ' ≈ ' + mb(size) : '') : 'Выбери видео и/или звук'}</div>`;
   if (s.y) {
     h += `<div class="s" onclick="toggleSb()"><span>✂️ Вырезать рекламу (SponsorBlock)</span><span class="w${sb ? ' on' : ''}"></span></div>`;
   }
+  h += `<div class="a"><button onclick="go()"${parts.length ? '' : ' disabled'}>⬇️ Скачать</button></div>`;
   return h;
 }
 
@@ -103,7 +136,9 @@ function job(s) {
 
 function draw() {
   const s = state();
-  let h = s.s == 'job' ? job(s) : pick(s);
+  // новая таблица от бота — выбор по умолчанию (лучшее H.264 + AAC) из неё
+  if (s.s == 'tbl' && W.chatData != seen) { seen = W.chatData; vs = s.dv ?? null; au = s.da ?? null }
+  let h = s.s == 'job' ? job(s) : table(s);
   if (note) h += `<div class="n${note == '⏳' ? '' : ' e'}" style="margin-top:6px">${esc(note)}</div>`;
   app.innerHTML = h;
 }
