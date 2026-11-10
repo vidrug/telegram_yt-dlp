@@ -97,12 +97,13 @@ function pick(s) {
 }
 
 // Косые полосы одним градиентом с явными точками: период вдоль линии 45° — 28/√2 px,
-// то есть 28 px по горизонтали, ровно на столько их сдвигает анимация sp
+// то есть 28 px по горизонтали, ровно на столько их сдвигает анимация sp.
+// Пустая полоса — прозрачный БЕЛЫЙ: transparent = rgba(0,0,0,0), и движок Telegram тянул полосы в чёрное
 const STRIPES = (() => {
-  const P = 28 / Math.SQRT2, c = 'rgba(255,255,255,.22)', g = [];
+  const P = 28 / Math.SQRT2, c = 'rgba(255,255,255,.22)', z = 'rgba(255,255,255,0)', g = [];
   for (let i = 0; i < 48; i++) {
     const a = (i * P).toFixed(1), b = (i * P + P / 2).toFixed(1), e = ((i + 1) * P).toFixed(1);
-    g.push(`${c} ${a}px`, `${c} ${b}px`, `transparent ${b}px`, `transparent ${e}px`);
+    g.push(`${c} ${a}px`, `${c} ${b}px`, `${z} ${b}px`, `${z} ${e}px`);
   }
   return `linear-gradient(45deg,${g.join(',')})`;
 })();
