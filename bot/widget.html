@@ -20,14 +20,20 @@ body{margin:0;padding:10px 12px}
 .w:after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s}
 .w.on{background:var(--tg-theme-button-color)}
 .w.on:after{transform:translateX(18px)}
-/* полоска в духе codepen.io/evawythien/pen/jegRxN: утопленная дорожка, блик, бегущие полосы */
-.b{height:14px;padding:3px;margin:10px 0 6px;border-radius:10px;overflow:hidden;background:rgba(0,0,0,.07);box-shadow:inset 0 1px 2px rgba(0,0,0,.14)}
+/* полоска в духе codepen.io/evawythien/pen/jegRxN: утопленная дорожка, блик, бегущие полосы.
+   Родной рендерер Telegram не анимирует background-position, поэтому всё движение — transform
+   отдельных слоёв, а разметка полоски постоянная (иначе transition ширины не срабатывает). */
+.b{position:relative;height:14px;padding:3px;margin:10px 0 6px;border-radius:10px;overflow:hidden;background:rgba(0,0,0,.07);box-shadow:inset 0 1px 2px rgba(0,0,0,.14)}
 @media (prefers-color-scheme:dark){.b{background:rgba(0,0,0,.25);box-shadow:inset 0 1px 2px rgba(0,0,0,.25),0 1px rgba(255,255,255,.08)}}
-.b i{display:block;height:100%;min-width:14px;border-radius:7px;background-color:#ef476f;background-image:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.05)),linear-gradient(45deg,rgba(255,255,255,.2) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.2) 50%,rgba(255,255,255,.2) 75%,transparent 75%,transparent);background-size:100% 100%,20px 20px;animation:st .8s linear infinite;transition:width 2.8s linear,background-color 2.8s linear}
-@keyframes st{from{background-position:0 0,0 0}to{background-position:0 0,20px 0}}
-/* этапы без процента — переливающаяся радуга (период градиента = ширина полоски) */
-.b.x i{background-image:linear-gradient(rgba(255,255,255,.3),rgba(255,255,255,.05)),linear-gradient(90deg,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964);background-size:100% 100%,200% 100%;animation:rb 2.5s linear infinite}
-@keyframes rb{from{background-position:0 0,0 0}to{background-position:0 0,100% 0}}
+#jf{position:relative;width:0;height:100%;min-width:14px;border-radius:7px;overflow:hidden;background:#f9bcca;transition:width 2.8s linear,background-color 2.8s linear}
+.gl,.sp,.rw,.rb{position:absolute;top:0;bottom:0;left:0;right:0}
+.gl{background:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.05))}
+.sp{left:-28px;background:linear-gradient(45deg,rgba(255,255,255,.22) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.22) 50%,rgba(255,255,255,.22) 75%,transparent 75%,transparent);background-size:28px 28px;animation:sp .9s linear infinite}
+@keyframes sp{from{transform:translateX(0)}to{transform:translateX(28px)}}
+/* этапы без процента — переливающаяся радуга: полоса двойной ширины с повтором цветов едет на половину */
+.rw{top:3px;bottom:3px;left:3px;right:3px;border-radius:7px;overflow:hidden}
+.rb{right:auto;width:200%;background:linear-gradient(90deg,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964);animation:rb 2.5s linear infinite}
+@keyframes rb{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 .a{display:flex;gap:8px;margin-top:10px}
 .a button{flex:1}
 </style>
@@ -92,30 +98,51 @@ function pick(s) {
   return h;
 }
 
+const $ = id => document.getElementById(id);
+const show = (id, on, how) => { $(id).style.display = on ? (how || 'block') : 'none' };
+let mode = '', lastB = null;
+
+// Ход скачивания: разметка создаётся один раз, дальше меняются только тексты,
+// ширина и цвет — так ширина плавно доезжает (transition), а полосы не перезапускаются
 function job(s) {
-  let h = '';
-  if (s.l) h += `<div class="q">${esc(s.l)}</div>`;
-  if (s.t) h += `<div class="${s.k || 'n'}">${esc(s.t)}</div>`;
+  if (mode != 'job') {
+    mode = 'job'; lastB = null;
+    app.innerHTML = '<div class="q" id="jl"></div><div id="jt"></div>'
+      + '<div class="b" id="jb"><div class="rw" id="jr"><span class="rb"></span><span class="gl"></span></div>'
+      + '<div id="jf"><span class="sp"></span><span class="gl"></span></div></div>'
+      + '<div class="n" id="jd"></div><div class="a" id="ja"></div><div id="jn" style="margin-top:6px"></div>';
+  }
+  $('jl').textContent = s.l || '';
+  $('jt').className = s.k || 'n';
+  $('jt').textContent = s.t || '';
+  show('jb', s.p != null);
   if (s.p != null) {
-    const ind = s.p < 0, p = ind ? 100 : Math.min(100, s.p);
-    // видео — розовая, звук — оранжевая; по мере заполнения из светлой становится насыщенной
-    const c = s.w == 'a' ? mix('#fdd38a', '#fca311', p / 100) : mix('#f9bcca', '#ef476f', p / 100);
-    h += `<div class="b${ind ? ' x' : ''}"><i style="width:${p}%;background-color:${c}"></i></div>`;
+    const ind = s.p < 0;
+    show('jr', ind);
+    show('jf', !ind);
+    if (!ind) {
+      const p = Math.min(100, s.p);
+      // видео — розовая, звук — оранжевая; по мере заполнения из светлой становится насыщенной
+      $('jf').style.width = p + '%';
+      $('jf').style.backgroundColor = s.w == 'a' ? mix('#fdd38a', '#fca311', p / 100) : mix('#f9bcca', '#ef476f', p / 100);
+    }
   }
-  if (s.d) h += `<div class="n">${esc(s.d)}</div>`;
-  if (s.b && s.b.length) {
-    h += '<div class="a">' + s.b.map((b, i) =>
-      `<button onclick="act(${i})">${esc(b[0])}</button>`
-    ).join('') + '</div>';
+  $('jd').textContent = s.d || '';
+  const b = JSON.stringify(s.b || []);
+  if (b != lastB) {  // кнопки пересоздаём только при изменении — не сбивать нажатие
+    lastB = b;
+    $('ja').innerHTML = (s.b || []).map((x, i) => `<button onclick="act(${i})">${esc(x[0])}</button>`).join('');
+    show('ja', s.b && s.b.length, 'flex');
   }
-  return h;
+  $('jn').className = note == '⏳' ? 'n' : 'n e';
+  $('jn').textContent = note;
 }
 
 function draw() {
   const s = state();
-  let h = s.s == 'job' ? job(s) : pick(s);
-  if (note) h += `<div class="n${note == '⏳' ? '' : ' e'}" style="margin-top:6px">${esc(note)}</div>`;
-  app.innerHTML = h;
+  if (s.s == 'job') return job(s);
+  mode = 'pick';
+  app.innerHTML = pick(s) + (note ? `<div class="n${note == '⏳' ? '' : ' e'}" style="margin-top:6px">${esc(note)}</div>` : '');
 }
 
 W.onEvent('chatDataChanged', () => { note = ''; draw() });
