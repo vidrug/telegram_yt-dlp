@@ -206,15 +206,15 @@ def render(sid: str, s: dict) -> InputRichMessage:
             text=text, style=style, callback_data=FullPickCallback(session=sid, act=act).pack(),
         )
 
-    buttons = []
+    # каждый InputRichBlockButtons — один ряд: три кнопки в ряд на телефоне не влезают
     if chosen:
-        buttons.append(button("⬇️ Скачать", "go", "success"))
+        blocks.append(InputRichBlockButtons(buttons=[
+            button("⬇️ Скачать", "go", "success"), button("✖ Сбросить", "clr"),
+        ]))
     if is_youtube(s["url"]):
-        buttons.append(button(f"✂️ Реклама: {'вырезать' if sel['sb'] else 'оставить'}", "sb"))
-    if chosen:
-        buttons.append(button("✖ Сбросить", "clr"))
-    if buttons:
-        blocks.append(InputRichBlockButtons(buttons=buttons))
+        blocks.append(InputRichBlockButtons(buttons=[
+            button(f"✂️ Вырезать рекламу: {'да' if sel['sb'] else 'нет'}", "sb"),
+        ]))
 
     blocks.append(InputRichBlockParagraph(
         text="Можно и текстом: пришли формат, например 315+251 или bestvideo+bestaudio",
