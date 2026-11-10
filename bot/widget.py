@@ -29,7 +29,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, U
 from bot.callbacks import ClassicCallback, RawFormatsCallback
 from bot.config import MAX_CONCURRENT_PER_USER, USE_WIDGETS, WIDGET_PROGRESS, log
 from bot.cookies import is_youtube
-from bot.downloader import progress_info
+from bot.downloader import progress_info, progress_track
 from bot.formats import fmt_bytes, format_filesize, video_quality
 from bot.jobs import SerialUI, cookie_prompt, run_download
 from bot.state import bot, dp, sessions, user_downloads, widget_sessions
@@ -295,10 +295,13 @@ class WidgetUI(SerialUI):
         self.back = () if standalone else (("Другой формат", "b"),)
 
     def _job(self, t: str, p: float | None = None, d: str | None = None,
-             b: tuple[tuple[str, str], ...] = (), k: str | None = None) -> Callable[[], Awaitable[None]]:
+             b: tuple[tuple[str, str], ...] = (), k: str | None = None,
+             w: str = "") -> Callable[[], Awaitable[None]]:
         state: dict[str, Any] = {"s": "job", "l": self.label, "t": t}
         if p is not None:
             state["p"] = round(p, 1)
+        if w:
+            state["w"] = w  # цвет полоски: видео — розовая, звук — оранжевая
         if d:
             state["d"] = d
         if b:
@@ -312,7 +315,8 @@ class WidgetUI(SerialUI):
 
     async def on_progress(self, d: dict) -> None:
         title, pct, details = progress_info(d)
-        await self._progress(self._job(title, -1 if pct is None else pct, details, b=(("Отменить", "x"),)))
+        await self._progress(self._job(title, -1 if pct is None else pct, details,
+                                       b=(("Отменить", "x"),), w=progress_track(d)))
 
     async def on_stage(self, text: str) -> None:
         # ffmpeg не прервать — кнопки «Отменить» на этом этапе нет

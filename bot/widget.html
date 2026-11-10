@@ -20,10 +20,14 @@ body{margin:0;padding:10px 12px}
 .w:after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s}
 .w.on{background:var(--tg-theme-button-color)}
 .w.on:after{transform:translateX(18px)}
-.b{height:8px;border-radius:4px;margin:10px 0 6px;background:var(--tg-theme-secondary-bg-color);overflow:hidden}
-.b i{display:block;height:100%;border-radius:4px;background:var(--tg-theme-button-color);transition:width 2.8s linear}
-.b.x i{width:35%;animation:x 1.3s ease-in-out infinite}
-@keyframes x{from{transform:translateX(-100%)}to{transform:translateX(300%)}}
+/* полоска в духе codepen.io/evawythien/pen/jegRxN: утопленная дорожка, блик, бегущие полосы */
+.b{height:14px;padding:3px;margin:10px 0 6px;border-radius:10px;overflow:hidden;background:rgba(0,0,0,.07);box-shadow:inset 0 1px 2px rgba(0,0,0,.14)}
+@media (prefers-color-scheme:dark){.b{background:rgba(0,0,0,.25);box-shadow:inset 0 1px 2px rgba(0,0,0,.25),0 1px rgba(255,255,255,.08)}}
+.b i{display:block;height:100%;min-width:14px;border-radius:7px;background-color:#ef476f;background-image:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.05)),linear-gradient(45deg,rgba(255,255,255,.2) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.2) 50%,rgba(255,255,255,.2) 75%,transparent 75%,transparent);background-size:100% 100%,20px 20px;animation:st .8s linear infinite;transition:width 2.8s linear,background-color 2.8s linear}
+@keyframes st{from{background-position:0 0,0 0}to{background-position:0 0,20px 0}}
+/* этапы без процента — переливающаяся радуга (период градиента = ширина полоски) */
+.b.x i{background-image:linear-gradient(rgba(255,255,255,.3),rgba(255,255,255,.05)),linear-gradient(90deg,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964);background-size:100% 100%,200% 100%;animation:rb 2.5s linear infinite}
+@keyframes rb{from{background-position:0 0,0 0}to{background-position:0 0,100% 0}}
 .a{display:flex;gap:8px;margin-top:10px}
 .a button{flex:1}
 </style>
@@ -34,6 +38,10 @@ let tab = 'v', sb = 0, note = '', busy = 0;
 try { sb = +localStorage.sb || 0 } catch (e) {}
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
+// смесь двух цветов #rrggbb в пропорции t (0..1)
+const mix = (a, b, t) => '#' + [1, 3, 5].map(i => Math.round(
+  parseInt(a.slice(i, i + 2), 16) * (1 - t) + parseInt(b.slice(i, i + 2), 16) * t
+).toString(16).padStart(2, '0')).join('');
 
 function state() {
   try { return JSON.parse(W.chatData) || {} } catch (e) { return {} }
@@ -89,8 +97,10 @@ function job(s) {
   if (s.l) h += `<div class="q">${esc(s.l)}</div>`;
   if (s.t) h += `<div class="${s.k || 'n'}">${esc(s.t)}</div>`;
   if (s.p != null) {
-    const ind = s.p < 0;
-    h += `<div class="b${ind ? ' x' : ''}"><i style="width:${ind ? 35 : Math.min(100, s.p)}%"></i></div>`;
+    const ind = s.p < 0, p = ind ? 100 : Math.min(100, s.p);
+    // видео — розовая, звук — оранжевая; по мере заполнения из светлой становится насыщенной
+    const c = s.w == 'a' ? mix('#fdd38a', '#fca311', p / 100) : mix('#f9bcca', '#ef476f', p / 100);
+    h += `<div class="b${ind ? ' x' : ''}"><i style="width:${p}%;background-color:${c}"></i></div>`;
   }
   if (s.d) h += `<div class="n">${esc(s.d)}</div>`;
   if (s.b && s.b.length) {

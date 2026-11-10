@@ -36,6 +36,16 @@ def _format_eta(seconds: float) -> str:
     return f"{minutes}:{secs:02d}"
 
 
+def progress_track(d: dict) -> str:
+    """Какая дорожка сейчас качается: "v" — видео, "a" — звук, "" — неизвестно."""
+    info = d.get("info_dict") or {}
+    if info.get("vcodec") not in (None, "none"):
+        return "v"
+    if info.get("acodec") not in (None, "none"):
+        return "a"
+    return ""
+
+
 def progress_info(d: dict) -> tuple[str, float | None, str]:
     """yt-dlp progress dict -> (заголовок, процент или None, строка деталей)."""
     # при video+audio yt-dlp качает дорожки по очереди, у каждой свои 0–100%
