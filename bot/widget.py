@@ -27,7 +27,7 @@ from aiogram.methods.base import TelegramMethod
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 
 from bot.callbacks import ClassicCallback, RawFormatsCallback
-from bot.config import MAX_CONCURRENT_PER_USER, USE_WIDGETS, log
+from bot.config import MAX_CONCURRENT_PER_USER, USE_WIDGETS, WIDGET_PROGRESS, log
 from bot.cookies import is_youtube
 from bot.downloader import progress_info
 from bot.formats import fmt_bytes, format_filesize, video_quality
@@ -88,7 +88,7 @@ async def probe() -> bool:
     """Проверить, поддерживает ли Bot API сервер виджеты (ничего не отправляя)."""
     global available
     available = False
-    if not USE_WIDGETS:
+    if not (USE_WIDGETS or WIDGET_PROGRESS):
         return False
     compressed = len(zlib.compress(WIDGET_HTML.encode(), 9))
     if compressed > 4096:
@@ -243,7 +243,7 @@ def session_caption(s: dict) -> str:
 async def send_picker(chat_id: int, sid: str, s: dict) -> bool:
     """Отправить виджет выбора формата. False — откатиться на классические кнопки."""
     global available
-    if not available:
+    if not (available and USE_WIDGETS):
         return False
     s["wopts"] = build_options(s["groups"])
     if not s["wopts"]["v"] and not s["wopts"]["a"]:
@@ -278,11 +278,21 @@ async def send_picker(chat_id: int, sid: str, s: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 class WidgetUI(SerialUI):
-    def __init__(self, chat_id: int, message_id: int, label: str, sponsorblock: bool) -> None:
+    """Ход скачивания в виджете.
+
+    standalone — виджет только для прогресса (формат выбран кнопками или в «Все
+    форматы»): «Другого формата» в нём нет, а после отправки файла он удаляется,
+    как раньше удалялось текстовое сообщение о прогрессе.
+    """
+
+    def __init__(self, chat_id: int, message_id: int, label: str, sponsorblock: bool,
+                 standalone: bool = False) -> None:
         super().__init__()
         self.chat_id = chat_id
         self.message_id = message_id
         self.label = label + (" · ✂️ без рекламы" if sponsorblock else "")
+        self.standalone = standalone
+        self.back = () if standalone else (("Другой формат", "b"),)
 
     def _job(self, t: str, p: float | None = None, d: str | None = None,
              b: tuple[tuple[str, str], ...] = (), k: str | None = None) -> Callable[[], Awaitable[None]]:
@@ -312,7 +322,17 @@ class WidgetUI(SerialUI):
         await self._step(self._job("📤 Отправляю в Telegram…", -1))
 
     async def delivered(self) -> None:
-        await self._step(self._job("✅ Готово — файл ниже", k="ok", b=(("Другой формат", "b"),)))
+        if not self.standalone:
+            await self._step(self._job("✅ Готово — файл ниже", k="ok", b=self.back))
+            return
+
+        async def remove() -> None:
+            widget_sessions.pop((self.chat_id, self.message_id), None)
+            try:
+                await bot.delete_message(self.chat_id, self.message_id)
+            except TelegramAPIError as e:
+                log.warning("progress widget delete failed: %s", e)
+        await self._step(remove)
 
     async def big_file(self, link: str, size: int) -> None:
         await self._step(self._job(
@@ -325,7 +345,7 @@ class WidgetUI(SerialUI):
         )
 
     async def missing_file(self) -> None:
-        await self._step(self._job("❌ Файл не найден после скачивания", k="e", b=(("Другой формат", "b"),)))
+        await self._step(self._job("❌ Файл не найден после скачивания", k="e", b=(("Повторить", "r"),) + self.back))
 
     async def failed(self, error: Exception, resumable: bool) -> None:
         text = str(error).removeprefix("ERROR: ")[:160]
@@ -333,15 +353,39 @@ class WidgetUI(SerialUI):
             text += " — частичный файл сохранён, «Повторить» докачает с места остановки"
         await self._step(self._job(
             "❌ Ошибка скачивания", k="e", d=text,
-            b=(("Повторить", "r"), ("Другой формат", "b")),
+            b=(("Повторить", "r"),) + self.back,
         ))
 
     async def need_cookies(self, url: str, user_id: int) -> None:
-        await self._step(self._job("🍪 YouTube требует вход — инструкция ниже", k="e", b=(("Другой формат", "b"),)))
+        await self._step(self._job("🍪 YouTube требует вход — инструкция ниже", k="e", b=self.back))
         await bot.send_message(self.chat_id, cookie_prompt(user_id, url), disable_web_page_preview=True)
 
     async def cancelled(self) -> None:
-        await self._step(self._job("⏹ Скачивание отменено", b=(("Другой формат", "b"),)))
+        await self._step(self._job("⏹ Скачивание отменено", b=(("Скачать заново", "r"),) + self.back))
+
+
+async def start_progress(
+    chat_id: int, sid: str, s: dict, user_id: int, *, fmt_id: str, label: str, sponsorblock: bool,
+    category: str | None = None, send_as: str | None = None,
+) -> bool:
+    """Показать прогресс виджетом и начать скачивание. False — показать прогресс текстом."""
+    if not (available and WIDGET_PROGRESS):
+        return False
+    first = {"s": "job", "l": label + (" · ✂️ без рекламы" if sponsorblock else ""),
+             "t": "⏳ Подготовка…", "p": -1, "b": [["Отменить", "x"]]}
+    try:
+        msg = await bot(SendWidget(
+            chat_id=chat_id, html=WIDGET_HTML, chat_data=_dump(first),
+            caption=session_caption(s), parse_mode="HTML", allow_queries=True,
+        ))
+    except TelegramAPIError as e:
+        log.warning("progress widget failed, falling back to text: %s", e)
+        return False
+    widget_sessions[(chat_id, msg.message_id)] = sid
+    s["wsel"] = {"fmt": fmt_id, "label": label, "sb": sponsorblock,
+                 "category": category, "send_as": send_as, "standalone": True}
+    _start_job(chat_id, msg.message_id, sid, s, user_id)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -352,17 +396,18 @@ _tasks: set[asyncio.Task] = set()
 
 
 def _start_job(chat_id: int, message_id: int, sid: str, s: dict, user_id: int) -> None:
-    fmt_id, label, sponsorblock = s["wsel"]
+    sel = s["wsel"]
     cancel = threading.Event()
     s["job"] = cancel
-    ui = WidgetUI(chat_id, message_id, label, sponsorblock)
+    ui = WidgetUI(chat_id, message_id, sel["label"], sel["sb"], standalone=sel["standalone"])
 
     async def runner() -> None:
         try:
             await ui.start()
             await run_download(
                 ui, chat_id=chat_id, user_id=user_id, sid=sid, s=s,
-                fmt_id=fmt_id, sponsorblock=sponsorblock, keep_session=True, cancel=cancel,
+                fmt_id=sel["fmt"], sponsorblock=sel["sb"], keep_session=True, cancel=cancel,
+                category=sel["category"], send_as=sel["send_as"],
             )
         finally:
             s.pop("job", None)
@@ -405,7 +450,10 @@ async def handle_query(q: dict) -> None:
                 await _answer(query_id, "Формат не найден — отправь ссылку заново")
                 return
             fmt_id, _, quality, details = opts[int(idx)]
-            s["wsel"] = (fmt_id, f"{quality} · {details.split(' · ')[0]}", sb_flag == "1")
+            s["wsel"] = {
+                "fmt": fmt_id, "label": f"{quality} · {details.split(' · ')[0]}", "sb": sb_flag == "1",
+                "category": None, "send_as": None, "standalone": False,
+            }
         elif not s.get("wsel"):
             await _answer(query_id, "Сначала выбери формат")
             return
@@ -422,6 +470,9 @@ async def handle_query(q: dict) -> None:
             cancel.set()  # хук прогресса yt-dlp прервёт скачивание
 
     elif cmd == "b":
+        if "wopts" not in s:  # виджет только с прогрессом — выбора формата в нём нет
+            await _answer(query_id, "Выбери формат кнопками в сообщении выше")
+            return
         if s.get("job"):
             await _answer(query_id, "Дождись окончания или отмени скачивание")
             return

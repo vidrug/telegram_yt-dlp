@@ -20,6 +20,7 @@ services:
       SHARED_DIR: /shared
       EXTERNAL_URL: ${EXTERNAL_URL}
       USE_WIDGETS: ${USE_WIDGETS:-0}  # 1 — виджет выбора формата вместо кнопок на первом экране
+      WIDGET_PROGRESS: ${WIDGET_PROGRESS:-1}  # 0 — прогресс скачивания текстом, а не виджетом
       PANEL_URL: http://host.docker.internal:1080
       OWNER_ID: ${OWNER_ID:-}  # пусто — команды владельца (прокси/VPN) отключены
       PANEL_TOKEN: ${PANEL_TOKEN:-}

@@ -48,7 +48,7 @@ from bot.formats import (
 )
 from bot.jobs import SerialUI, cookie_prompt, find_format, run_download
 from bot.state import awaiting_cookies, bot, executor, router, sessions, user_downloads
-from bot.widget import send_picker, session_caption
+from bot.widget import send_picker, session_caption, start_progress
 
 
 @router.message(CommandStart())
@@ -327,9 +327,18 @@ async def handle_full_pick(callback: CallbackQuery, callback_data: FullPickCallb
                 show_alert=True,
             )
             return
+        if s.get("job"):
+            await callback.answer("⏳ Этот ролик уже скачивается — дождись или отмени.", show_alert=True)
+            return
         await callback.answer()
         selector, send_as, label = chosen
         sponsorblock = s["full_sel"]["sb"]
+        # прогресс виджетом; таблица остаётся для следующего выбора
+        if callback.message.chat.type == "private" and await start_progress(
+            callback.message.chat.id, sid, s, user_id, fmt_id=selector, label=label,
+            sponsorblock=sponsorblock, category="pair", send_as=send_as,
+        ):
+            return
         text = f"⬇️ Скачиваю: {escape(label)}{' | SponsorBlock ✅' if sponsorblock else ''}\n\nПодготовка..."
         # с таблицы — новое сообщение (таблица остаётся для следующего выбора), с «Повторить» — то же
         if callback.message.message_id == s.get("full_msg"):
@@ -579,13 +588,27 @@ async def handle_sponsorblock(callback: CallbackQuery, callback_data: SponsorBlo
         )
         return
 
+    if s.get("job"):
+        await callback.answer("⏳ Этот ролик уже скачивается — дождись или отмени.", show_alert=True)
+        return
+
     await callback.answer()
 
     # Build label for progress message
     selected_format, _ = find_format(s, fmt_id)
     label = format_button_label(selected_format) if selected_format else fmt_id
-    sb_text = " | SponsorBlock ✅" if sponsorblock else ""
 
+    # Прогресс виджетом (Bot API 10.4); экран выбора формата он заменяет
+    if callback.message.chat.type == "private" and await start_progress(
+        callback.message.chat.id, sid, s, user_id, fmt_id=fmt_id, label=label, sponsorblock=sponsorblock,
+    ):
+        try:
+            await callback.message.delete()
+        except TelegramAPIError:
+            pass
+        return
+
+    sb_text = " | SponsorBlock ✅" if sponsorblock else ""
     progress_msg = await callback.message.edit_text(
         f"⬇️ Скачиваю: {escape(label)}{sb_text}\n\nПодготовка..."
     )
