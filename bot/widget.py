@@ -6,13 +6,11 @@ aiogram 3.31 знает только Bot API 10.3, поэтому методы �
 
 HTML отправленного виджета изменить нельзя, поэтому bot/widget.html — тонкий
 рендерер, а все тексты, статусы и кнопки задаются здесь, в chat_data:
-  {"s": "tbl", "c": [кодеки — столбцы], "r": [качества — строки],
-   "v": [[строка, столбец, МБ, 🔊?], ...], "a": [[звук, МБ], ...],
-   "dv": видео по умолчанию, "da": звук по умолчанию, "y": SponsorBlock?}  — таблица
+  {"s": "pick", "v": [[качество, детали], ...], "a": [...], "y": 1}  — выбор формата
   {"s": "job", "l": что качаем, "t": статус, "k": "e"|"ok", "p": % (-1 — бегущая
-   полоска), "d": детали, "b": [[текст, запрос], ...]}                    — ход скачивания
-Запросы виджета: g:<видео>:<звук>:<sb> — скачать пару (индексы, пусто — без
-дорожки), r — повторить, x — отменить, b — вернуться к таблице.
+   полоска), "d": детали, "b": [[текст, запрос], ...]}               — ход скачивания
+Запросы виджета: d:<v|a><i>:<sb> — скачать, r — повторить, x — отменить,
+b — вернуться к выбору формата.
 """
 
 import asyncio
@@ -22,7 +20,7 @@ import threading
 import zlib
 from html import escape
 from pathlib import Path
-from typing import Any, Awaitable, Callable, NamedTuple
+from typing import Any, Awaitable, Callable
 
 from aiogram.exceptions import TelegramAPIError
 from aiogram.methods.base import TelegramMethod
@@ -32,22 +30,13 @@ from bot.callbacks import ClassicCallback, RawFormatsCallback
 from bot.config import MAX_CONCURRENT_PER_USER, USE_WIDGETS, log
 from bot.cookies import is_youtube
 from bot.downloader import progress_info
-from bot.formats import (
-    CODEC_ORDER,
-    audio_label,
-    codec_name,
-    fmt_bytes,
-    format_filesize,
-    pair_selector,
-    video_quality,
-)
+from bot.formats import fmt_bytes, format_filesize, video_quality
 from bot.jobs import SerialUI, cookie_prompt, run_download
 from bot.state import bot, dp, sessions, user_downloads, widget_sessions
 
 MAX_DATA_BYTES = 1024  # chat_data и ответ на запрос
-MAX_TABLE_ROWS = 9     # с блоком звука и кнопкой — в пределах ~560 px высоты
-MAX_TABLE_COLS = 4
-MAX_AUDIO = 5
+MAX_VIDEO_ROWS = 9     # с вкладками и SponsorBlock — в пределах ~560 px высоты
+MAX_AUDIO_ROWS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -149,36 +138,18 @@ async def _answer(query_id: str, error: str | None = None) -> None:
 
 
 
-def _video_rank(f: dict, prefer_separate: bool) -> tuple:
-    # Внутри одной ячейки (качество × кодек): отдельная видеодорожка, если есть
-    # звук на выбор, затем известный размер (не HLS) и битрейт.
+def _video_rank(f: dict) -> tuple:
+    # Внутри одного качества: известный размер (не HLS), затем H.264 — Telegram
+    # проигрывает его прямо в чате на всех клиентах, VP9/AV1 в MP4 — не везде.
     return (
-        (f.get("acodec") in (None, "none")) == prefer_separate,
         fmt_bytes(f) > 0,
         not str(f.get("protocol") or "").startswith("m3u8"),
+        str(f.get("vcodec") or "").startswith("avc1"),
         f.get("tbr") or 0,
     )
 
 
-
-
-
-
-class VideoCell(NamedTuple):
-    fmt_id: str
-    row: int
-    col: int
-    size: int
-    muxed: bool  # звук уже внутри (360p у YouTube, всё у VK/Instagram)
-
-
-class AudioOpt(NamedTuple):
-    fmt_id: str
-    label: str
-    size: int
-
-
-def _audio_options(groups: dict[str, list[dict]]) -> list[AudioOpt]:
+def _audio_options(groups: dict[str, list[dict]]) -> list[tuple[str, str, str, str]]:
     fmts = [f for f in groups.get("audio_only", []) if "drc" not in str(f["format_id"]).lower()]
     if not fmts:
         fmts = groups.get("audio_only", [])
@@ -188,95 +159,76 @@ def _audio_options(groups: dict[str, list[dict]]) -> list[AudioOpt]:
     for f in sorted(fmts, key=lambda f: f.get("abr") or f.get("tbr") or 0, reverse=True):
         if (f.get("language_preference") or -1) != top_lang:
             continue
-        label = audio_label(f)
-        if label in seen:
+        abr = f.get("abr") or f.get("tbr")
+        key = (f.get("ext"), round(abr or 0))
+        if key in seen:
             continue
-        seen.add(label)
-        out.append(AudioOpt(str(f["format_id"]), label, fmt_bytes(f)))
-        if len(out) >= MAX_AUDIO:
+        seen.add(key)
+        q = f"{round(abr)} kbps" if abr else (f.get("format_note") or str(f["format_id"]))
+        out.append((f["format_id"], "audio_only", q,
+                    f"{(f.get('ext') or '?').upper()} · {format_filesize(fmt_bytes(f))}"))
+        if len(out) >= MAX_AUDIO_ROWS:
             break
     return out
 
 
-def build_table(groups: dict[str, list[dict]], max_rows: int = MAX_TABLE_ROWS) -> dict:
-    """Матрица «качество × кодек» с одним форматом в ячейке и список звука.
+def build_options(groups: dict[str, list[dict]]) -> dict[str, list[tuple[str, str, str, str]]]:
+    """Сжатый список для виджета: по одному формату на качество.
 
-    Возвращает {"rows", "cols", "video": [VideoCell], "audio": [AudioOpt], "dv", "da"},
-    индексы video/audio — те же, что видит виджет.
+    Возвращает {"v": [...], "a": [...]} из кортежей
+    (format_id, категория, качество, детали).
     """
-    audio = _audio_options(groups)
-    candidates = [f for cat in ("video_audio", "video_only") for f in groups.get(cat, [])]
+    candidates = [(f, cat) for cat in ("video_audio", "video_only") for f in groups.get(cat, [])]
     # без высоты при наличии других — это HLS-аудио, ошибочно похожее на видео (ext mp4, кодеков нет)
-    if any(f.get("height") for f in candidates):
-        candidates = [f for f in candidates if f.get("height")]
+    if any(f.get("height") for f, _ in candidates):
+        candidates = [(f, cat) for f, cat in candidates if f.get("height")]
 
-    best: dict[tuple[str, str], dict] = {}
-    for f in candidates:
-        key = (video_quality(f), codec_name(f))
-        if key not in best or _video_rank(f, bool(audio)) > _video_rank(best[key], bool(audio)):
-            best[key] = f
+    best: dict[str, tuple[dict, str]] = {}
+    for f, cat in candidates:
+        q = video_quality(f)
+        if q not in best or _video_rank(f) > _video_rank(best[q][0]):
+            best[q] = (f, cat)
+    video = sorted(
+        best.items(),
+        key=lambda kv: (kv[1][0].get("height") or 0, kv[1][0].get("fps") or 0),
+        reverse=True,
+    )[:MAX_VIDEO_ROWS]
 
-    order = {}
-    for (quality, _), f in best.items():
-        order[quality] = max(order.get(quality, (0, 0)), (f.get("height") or 0, f.get("fps") or 0))
-    rows = sorted(order, key=order.get, reverse=True)[:max_rows]
+    audio = _audio_options(groups)
+    audio_bytes = max((fmt_bytes(f) for f in groups.get("audio_only", [])), default=0)
 
-    used = [codec for (quality, codec) in best if quality in rows]
-    cols = sorted(set(used), key=lambda c: (CODEC_ORDER.index(c) if c in CODEC_ORDER else len(CODEC_ORDER), -used.count(c)))
-    cols = cols[:MAX_TABLE_COLS]
+    rows = []
+    for q, (f, cat) in video:
+        ext = "MP4" if cat == "video_only" else (f.get("ext") or "?").upper()
+        codec = str(f.get("vcodec") or "").split(".")[0]
+        parts = [ext]
+        if codec and not codec.startswith(("avc1", "none")):
+            parts.append({"vp09": "VP9", "vp9": "VP9", "av01": "AV1"}.get(codec, codec.upper()))
+        size = fmt_bytes(f)
+        if cat == "video_only" and size and audio_bytes:
+            # к видео без звука при скачивании приклеится лучшая аудиодорожка
+            parts.append(f"≈{format_filesize(size + audio_bytes)}")
+        else:
+            parts.append(format_filesize(size))
+        rows.append((f["format_id"], cat, q, " · ".join(parts)))
 
-    video = []
-    for ri, quality in enumerate(rows):
-        for ci, codec in enumerate(cols):
-            f = best.get((quality, codec))
-            if f:
-                muxed = f.get("acodec") not in (None, "none") or not audio
-                video.append(VideoCell(str(f["format_id"]), ri, ci, fmt_bytes(f), muxed))
-
-    # по умолчанию — лучшее H.264 + AAC: так Telegram проигрывает файл прямо в чате
-    dv = next((i for i, v in enumerate(video) if cols[v.col] == "H.264"), 0 if video else None)
-    da = None
-    if audio and not (dv is not None and video[dv].muxed):
-        da = next((i for i, a in enumerate(audio) if a.label.startswith("AAC")), 0)
-    return {"rows": rows, "cols": cols, "video": video, "audio": audio, "dv": dv, "da": da}
-
-
-def _mb(size: int) -> float:
-    return round(size / 1024 / 1024, 1)
+    return {"v": rows, "a": audio}
 
 
-def table_state(s: dict) -> dict:
-    last_dv, last_da = s.get("wlast", (None, None))
-    for max_rows in range(MAX_TABLE_ROWS, 0, -1):
-        t = build_table(s["groups"], max_rows)
-        state = {
-            "s": "tbl",
-            "c": t["cols"],
-            "r": t["rows"],
-            "v": [[v.row, v.col, _mb(v.size), int(v.muxed)] for v in t["video"]],
-            "a": [[a.label, _mb(a.size)] for a in t["audio"]],
-            "dv": t["dv"],
-            "da": t["da"],
-            "y": int(is_youtube(s["url"])),
-        }
-        if "wlast" in s:  # «Другой формат» — начинаем с прошлого выбора
-            state["dv"] = last_dv if last_dv is None or last_dv < len(t["video"]) else t["dv"]
-            state["da"] = last_da if last_da is None or last_da < len(t["audio"]) else t["da"]
-        # chat_data — максимум 1024 байта: урезаем таблицу снизу
-        if len(_dump(state).encode()) <= MAX_DATA_BYTES:
-            break
-    s["wtable"] = t
+def pick_state(s: dict) -> dict:
+    opts = s["wopts"]
+    state = {
+        "s": "pick",
+        "v": [[q, m] for _, _, q, m in opts["v"]],
+        "a": [[q, m] for _, _, q, m in opts["a"]],
+        "y": int(is_youtube(s["url"])),
+    }
+    # chat_data — максимум 1024 байта: урезаем длинный список с конца
+    while len(_dump(state).encode()) > MAX_DATA_BYTES:
+        longest = "v" if len(state["v"]) >= len(state["a"]) else "a"
+        state[longest].pop()
+        opts[longest].pop()
     return state
-
-
-def selection(t: dict, vi: int | None, ai: int | None) -> tuple[str, str, str] | None:
-    """Индексы из виджета -> (селектор yt-dlp, как отправить файл, подпись)."""
-    v = t["video"][vi] if vi is not None else None
-    a = t["audio"][ai] if ai is not None and not (v and v.muxed) else None
-    return pair_selector(
-        v.fmt_id if v else None, f"{t['rows'][v.row]} {t['cols'][v.col]}" if v else "",
-        bool(v and v.muxed), a.fmt_id if a else None, a.label if a else "",
-    )
 
 
 def session_caption(s: dict) -> str:
@@ -293,8 +245,8 @@ async def send_picker(chat_id: int, sid: str, s: dict) -> bool:
     global available
     if not available:
         return False
-    state = table_state(s)
-    if not state["v"] and not state["a"]:
+    s["wopts"] = build_options(s["groups"])
+    if not s["wopts"]["v"] and not s["wopts"]["a"]:
         return False
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -305,7 +257,7 @@ async def send_picker(chat_id: int, sid: str, s: dict) -> bool:
         msg = await bot(SendWidget(
             chat_id=chat_id,
             html=WIDGET_HTML,
-            chat_data=_dump(state),
+            chat_data=_dump(pick_state(s)),
             caption=session_caption(s),
             parse_mode="HTML",
             allow_queries=True,
@@ -400,7 +352,7 @@ _tasks: set[asyncio.Task] = set()
 
 
 def _start_job(chat_id: int, message_id: int, sid: str, s: dict, user_id: int) -> None:
-    selector, send_as, label, sponsorblock = s["wsel"]
+    fmt_id, label, sponsorblock = s["wsel"]
     cancel = threading.Event()
     s["job"] = cancel
     ui = WidgetUI(chat_id, message_id, label, sponsorblock)
@@ -410,8 +362,7 @@ def _start_job(chat_id: int, message_id: int, sid: str, s: dict, user_id: int) -
             await ui.start()
             await run_download(
                 ui, chat_id=chat_id, user_id=user_id, sid=sid, s=s,
-                fmt_id=selector, sponsorblock=sponsorblock, keep_session=True, cancel=cancel,
-                category="pair", send_as=send_as,
+                fmt_id=fmt_id, sponsorblock=sponsorblock, keep_session=True, cancel=cancel,
             )
         finally:
             s.pop("job", None)
@@ -442,29 +393,19 @@ async def handle_query(q: dict) -> None:
 
     cmd, _, arg = data.partition(":")
 
-    if cmd in ("g", "r"):
+    if cmd in ("d", "r"):
         if s.get("job"):
             await _answer(query_id, "Уже скачиваю")
             return
-        if cmd == "g":
-            t = s.get("wtable")
-            parts = arg.split(":")
-            if t is None or len(parts) != 3:
+        if cmd == "d":
+            key, _, sb_flag = arg.partition(":")
+            tab, idx = key[:1], key[1:]
+            opts = s.get("wopts", {}).get(tab) or []
+            if not idx.isdigit() or int(idx) >= len(opts):
                 await _answer(query_id, "Формат не найден — отправь ссылку заново")
                 return
-            vi, ai, sb_flag = parts
-            try:
-                vi_ = int(vi) if vi else None
-                ai_ = int(ai) if ai else None
-                chosen = selection(t, vi_, ai_)
-            except (ValueError, IndexError):
-                chosen = None
-            if chosen is None:
-                await _answer(query_id, "Выбери видео и/или звук")
-                return
-            selector, send_as, label = chosen
-            s["wsel"] = (selector, send_as, label, sb_flag == "1")
-            s["wlast"] = (vi_, ai_)
+            fmt_id, _, quality, details = opts[int(idx)]
+            s["wsel"] = (fmt_id, f"{quality} · {details.split(' · ')[0]}", sb_flag == "1")
         elif not s.get("wsel"):
             await _answer(query_id, "Сначала выбери формат")
             return
@@ -485,7 +426,7 @@ async def handle_query(q: dict) -> None:
             await _answer(query_id, "Дождись окончания или отмени скачивание")
             return
         await _answer(query_id)
-        await set_state(chat_id, message_id, table_state(s))
+        await set_state(chat_id, message_id, pick_state(s))
 
     else:
         await _answer(query_id, "Неизвестная команда")
@@ -493,7 +434,7 @@ async def handle_query(q: dict) -> None:
 
 def _is_download_query(query: dict) -> bool:
     # Запросы панели владельца (bot/widgets.py) начинаются с цифры — версии её протокола.
-    # Наши (g:…, r, x, b) — никогда, и это верно даже для виджетов, отправленных до рестарта.
+    # Наши (d:…, r, x, b) — никогда, и это верно даже для виджетов, отправленных до рестарта.
     return not (query.get("data") or "")[:1].isdigit()
 
 
