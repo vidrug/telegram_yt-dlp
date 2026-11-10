@@ -13,7 +13,7 @@ from aiogram.types import (BufferedInputFile, CallbackQuery, InlineKeyboardButto
                            InlineKeyboardMarkup, Message)
 
 from bot.config import OWNER_ID, PANEL_TOKEN, PANEL_URL, log
-from bot.state import router
+from bot.state import bot, router
 
 # user_id -> {"kind": "proxy"|"vpn"} — ждём следующим сообщением имя нового пользователя
 _awaiting: dict[int, dict] = {}
@@ -42,6 +42,43 @@ async def _post(path: str, payload: dict) -> dict:
             if r.status != 200:
                 raise RuntimeError(str(data.get("error") or f"HTTP {r.status}"))
             return data
+
+
+# --- общие действия: ими пользуются и кнопки /config, и виджет /panel (bot/widgets.py) ---
+
+async def send_proxy_link(chat_id: int, name: str) -> None:
+    """Прислать в чат ссылку прокси пользователя (чтобы переслать ему)."""
+    d = await _get("/api/provision/list")
+    it = next((x for x in d.get("proxy", []) if x["name"] == name), None)
+    if not it or not it.get("tme_link"):
+        raise RuntimeError("ссылки нет — пользователь отключён?")
+    await bot.send_message(
+        chat_id,
+        f"📡 <b>{escape(name)}</b> — ссылка на прокси\n\n<code>{escape(it['tme_link'])}</code>\n\n"
+        "Переслать ему целиком: тап по ссылке добавит и включит прокси.",
+        disable_web_page_preview=True)
+
+
+async def send_vpn_config(chat_id: int, name: str) -> None:
+    """Прислать в чат .conf пира AmneziaWG."""
+    d = await _get(f"/api/provision/vpn/{name}")
+    await bot.send_document(
+        chat_id, BufferedInputFile(d["config"].encode("utf-8"), filename=f"{name}.conf"),
+        caption=f"🔐 <b>{escape(name)}</b> — конфиг AmneziaWG\nИмпорт в приложении: «Добавить» → из файла.")
+
+
+async def ask_new_name(chat_id: int, user_id: int, kind: str) -> None:
+    """Спросить имя нового пользователя; ответ ловит on_new_name."""
+    if kind not in ("proxy", "vpn"):
+        raise ValueError(kind)
+    _awaiting[user_id] = {"kind": kind}
+    warn = ("\n\n⚠️ Создание перезапустит прокси — у всех на несколько секунд оборвётся связь."
+            if kind == "proxy" else "\n\nVPN добавляется без перезапуска, никого не оборвёт.")
+    await bot.send_message(
+        chat_id,
+        f"Имя нового {'пользователя прокси' if kind == 'proxy' else 'пира VPN'}?"
+        + ("\nЛатиница, цифры, _ и -" if kind == "proxy" else "\nМожно по-русски, до 32 символов")
+        + warn + "\n\nОтправь имя сообщением или /cancel.")
 
 
 def _menu() -> InlineKeyboardMarkup:
@@ -117,16 +154,9 @@ async def cb_proxy_give(c: CallbackQuery) -> None:
         return await c.answer()
     name = c.data.split(":", 2)[2]
     try:
-        d = await _get("/api/provision/list")
+        await send_proxy_link(c.message.chat.id, name)
     except Exception as e:
-        return await c.answer(f"панель: {e}"[:180], show_alert=True)
-    it = next((x for x in d.get("proxy", []) if x["name"] == name), None)
-    if not it or not it.get("tme_link"):
-        return await c.answer("ссылки нет — пользователь отключён?", show_alert=True)
-    await c.message.answer(
-        f"📡 <b>{escape(name)}</b> — ссылка на прокси\n\n<code>{escape(it['tme_link'])}</code>\n\n"
-        "Переслать ему целиком: тап по ссылке добавит и включит прокси.",
-        disable_web_page_preview=True)
+        return await c.answer(f"{e}"[:180], show_alert=True)
     await c.answer("готово")
 
 
@@ -136,12 +166,9 @@ async def cb_vpn_give(c: CallbackQuery) -> None:
         return await c.answer()
     name = c.data.split(":", 2)[2]
     try:
-        d = await _get(f"/api/provision/vpn/{name}")
+        await send_vpn_config(c.message.chat.id, name)
     except Exception as e:
         return await c.answer(f"нет конфига: {e}"[:180], show_alert=True)
-    await c.message.answer_document(
-        BufferedInputFile(d["config"].encode("utf-8"), filename=f"{name}.conf"),
-        caption=f"🔐 <b>{escape(name)}</b> — конфиг AmneziaWG\nИмпорт в приложении: «Добавить» → из файла.")
     await c.answer("готово")
 
 
@@ -150,13 +177,10 @@ async def cb_new(c: CallbackQuery) -> None:
     if not _owner(c):
         return await c.answer()
     kind = c.data.split(":", 2)[2]
-    _awaiting[c.from_user.id] = {"kind": kind}
-    warn = ("\n\n⚠️ Создание перезапустит прокси — у всех на несколько секунд оборвётся связь."
-            if kind == "proxy" else "\n\nVPN добавляется без перезапуска, никого не оборвёт.")
-    await c.message.answer(
-        f"Имя нового {'пользователя прокси' if kind == 'proxy' else 'пира VPN'}?"
-        + ("\nЛатиница, цифры, _ и -" if kind == "proxy" else "\nМожно по-русски, до 32 символов")
-        + warn + "\n\nОтправь имя сообщением или /cancel.")
+    try:
+        await ask_new_name(c.message.chat.id, c.from_user.id, kind)
+    except ValueError:
+        return await c.answer("неизвестный тип", show_alert=True)
     await c.answer()
 
 

@@ -38,6 +38,14 @@ async def _panel() -> dict:
     return data
 
 
+def live(u: dict) -> bool:
+    """«В сети» по прокси: открыто соединение ИЛИ был трафик за последние 3 мин.
+    Клиенты Telegram держат соединения короткими, поэтому счётчик активных почти всегда 0,
+    а сборщик пишет трафик раз в минуту — по нему и видно, кто реально пользуется."""
+    q = u.get("quiet_sec")
+    return bool(u.get("online")) or (q is not None and q < 180)
+
+
 def _b(n) -> str:
     n = float(n or 0)
     for u in ("B", "KB", "MB", "GB"):
@@ -78,8 +86,8 @@ def _fmt_status(d: dict) -> str:
     else:
         lines.append("все проверки в норме")
     lines.append("")
-    online = sorted(n for n, v in us.items() if v.get("online"))
-    lines.append(f"👥 прокси: {len(online)} онлайн из {len(us)}" + (f" — {', '.join(escape(n) for n in online)}" if online else ""))
+    online = sorted(n for n, v in us.items() if live(v))
+    lines.append(f"👥 прокси: {len(online)} в сети из {len(us)}" + (f" — {', '.join(escape(n) for n in online)}" if online else ""))
     lines.append(f"📊 соединений {p.get('active', 0)}/{p.get('max', 0)} · сканеры {((h.get('trend') or {}).get('unknown_sni') or {}).get('1h', '?')}/ч")
     peers = vpn.get("peers") or []
     von = [x["name"] for x in peers if x.get("online")]
@@ -105,13 +113,13 @@ def _fmt_user(name: str, d: dict) -> str:
         return f"не знаю пользователя <b>{escape(name)}</b>. Известные: {escape(known)}"
     lines = [f"<b>{escape(name)}</b>"]
     if u:
-        state = "🟢 онлайн" if u.get("online") else ("⚪ " + _ago(u.get("quiet_sec")))
-        lines.append(f"📡 прокси — {state}" + (f" ({u.get('sessions')} сессии)" if u.get("online") else ""))
+        state = "🟢 в сети" if live(u) else ("⚪ " + _ago(u.get("quiet_sec")))
+        lines.append(f"📡 прокси — {state}" + (f" ({u.get('sessions')} сессии)" if u.get("sessions") else ""))
         lines.append(f"24ч ↓{_b(u.get('down_24h'))} ↑{_b(u.get('up_24h'))} · 7д ↓{_b(u.get('down_7d'))} ↑{_b(u.get('up_7d'))}")
         r = u.get("ratio_7d") if u.get("ratio_7d") is not None else u.get("ratio_24h")
         rs = u.get("ratio_state")
         verdict = {"ok": "здоровое", "mid": "нормальное", "bad": "ПЛОХОЕ (как у мамы до починки)", "idle": "мало данных"}.get(rs, "?")
-        lines.append(f"вниз/вверх {r if r is not None else '—'} — {verdict} · активных дней {u.get('active_days_14d', 0)}/14"
+        lines.append(f"вниз/вверх {r if r is not None else '—'} — {verdict} · активных дней {min(14, u.get('active_days_14d') or 0)}/14"
                      + (", ежедневный" if u.get("daily_user") else ""))
         if not u.get("enabled", True):
             lines.append("⛔ пользователь отключён")
@@ -164,8 +172,8 @@ async def cmd_stats(m: Message, command: CommandObject) -> None:
         us = (d.get("user_stats") or {}).get("users") or {}
         rows = []
         for n, u in sorted(us.items(), key=lambda kv: -(kv[1].get("down_24h") or 0)):
-            st = "🟢" if u.get("online") else "⚪"
-            rows.append(f"{st} {escape(n)}: ↓{_b(u.get('down_24h'))} за 24ч, {_ago(u.get('quiet_sec')) if not u.get('online') else 'онлайн'}")
+            st = "🟢" if live(u) else "⚪"
+            rows.append(f"{st} {escape(n)}: ↓{_b(u.get('down_24h'))} за 24ч, {_ago(u.get('quiet_sec')) if not live(u) else 'в сети'}")
         await m.answer("👥 <b>Прокси, 24ч</b>\n" + "\n".join(rows) + "\n\n<code>/stats имя</code> — подробно", disable_web_page_preview=True)
         return
     await _reply(m, lambda d: _fmt_user(name, d))
@@ -184,7 +192,8 @@ async def register_owner_commands() -> None:
         return
     try:
         await bot.set_my_commands(
-            [BotCommand(command="status", description="Здоровье прокси/VPN одной строкой"),
+            [BotCommand(command="panel", description="Живая панель прокси/VPN (виджет)"),
+             BotCommand(command="status", description="Здоровье прокси/VPN одной строкой"),
              BotCommand(command="stats", description="Трафик пользователей (или /stats имя)"),
              BotCommand(command="vpn", description="Пиры VPN"),
              BotCommand(command="config", description="Выдать ссылку прокси / конфиг VPN, добавить нового")],

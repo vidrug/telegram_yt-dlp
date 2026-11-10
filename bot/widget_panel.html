@@ -1,0 +1,118 @@
+<style>
+body{margin:0;padding:12px 12px 10px;background:#0e0e17;color:#f75049;font-family:system-ui;--r:#f75049;--h:rgba(247,80,73,.62);--l:rgba(247,80,73,.3);--f:rgba(247,80,73,.08);--c:#5ef6ff;--w:#ece9e6}
+.s1{--s:#1ded83}.s2{--s:#f0b537}.s3{--s:#f75049}
+#h{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--l)}
+#h b{color:var(--c);font-size:1.1em;letter-spacing:.14em;text-transform:uppercase;border-bottom:2px solid var(--c);margin-bottom:-1px;padding:0 2px 5px}
+.pl{font-size:.68em;padding:1px 6px;border:1px solid var(--s,var(--l));color:var(--s,var(--h));text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
+.pl:before,.dt:before{content:'■';margin-right:5px;color:var(--s,var(--h))}
+#ag,.ax,.k b,.big{font-family:ui-monospace,monospace}
+#ag{margin-left:auto;margin-bottom:5px}
+.m,#ag,#st,.ax{color:var(--h);font-size:.78em}
+.m{white-space:pre-line}
+.m b{color:var(--c)}
+button{background:var(--f);color:var(--r);border:1px solid var(--l);border-radius:0;text-transform:uppercase;letter-spacing:.06em;font-size:.78em;padding:7px 4px;height:auto}
+#x{width:26px;height:26px;padding:0;margin-bottom:5px}
+nav,.sg{display:flex;gap:4px;margin:10px 0 8px}
+nav button,.sg button{flex:1;padding:5px 0}
+.a{background:var(--r);color:#0e0e17;font-weight:700;border-color:var(--r)}
+.g{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.k{border:1px solid var(--l);border-left:2px solid var(--r);background:linear-gradient(225deg,var(--r) 0 6px,transparent 6px),var(--f);padding:6px 9px}
+.k b{display:block;font-size:1.1em;margin:2px 0;color:var(--w)}
+.r{display:flex;align-items:center;gap:10px;padding:3px 0}
+.r+.r{border-top:1px solid var(--l)}
+.r i{font-style:normal;margin-left:auto;text-align:right;white-space:nowrap}
+.f{flex:1;min-width:0;line-height:1.25}
+.nm,.f b,.f span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.f b,.f span{display:block}
+.f b,.nm{text-transform:uppercase;letter-spacing:.06em}
+.av{position:relative;width:26px;height:26px;flex:none;border:1px solid;font-weight:700;display:flex;align-items:center;justify-content:center;background:var(--f)}
+.av.L{width:42px;height:42px;font-size:1.3em}
+.av s{position:absolute;right:-4px;bottom:-4px;width:7px;height:7px;border:2px solid #0e0e17;background:#1ded83}
+.ch{border-bottom:1px solid var(--r);margin-top:8px;background:var(--f)}
+svg{display:block;width:100%;height:72px}
+rect{fill:var(--r)}rect.y{fill:var(--c)}rect.z{fill:rgba(94,246,255,.16)}
+.ax{position:relative;height:1.5em;flex:1}.ax span{position:absolute}
+.q{display:inline-block;width:8px;height:8px;margin:0 4px 0 2px;background:var(--r)}.q.y{background:var(--c)}
+.hb{display:flex;gap:2px;height:6px;margin-top:4px}
+.hb u{background:var(--r)}.hb .y{background:var(--c)}
+.nm{width:84px;flex:none;font-size:.88em}
+svg.tl{flex:1;height:14px;background:var(--f);border:1px solid var(--l)}
+.bs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
+.big{font-size:1.7em;font-weight:700;color:var(--w)}
+p{margin:6px 0}
+</style>
+<div id="h"><b>china</b><span class="pl" id="sp"></span><span id="ag" class="m"></span><button id="x" data-k="!x">✕</button></div>
+<nav><button data-k="o" id="to">Обзор</button><button data-k="p" id="tp">Люди</button><button data-k="t:1" id="tt">Трафик</button><button data-k="a" id="ta">Когда</button></nav>
+<div id="c"></div>
+<div id="st"></div>
+<script>
+const W=window.TelegramWidget,$=i=>document.getElementById(i),C=$('c');
+let V='o',D={},q=0,GS=[],S={},CW='h';
+if(W.chatData)try{D.o=JSON.parse(W.chatData)}catch(e){}
+const E=s=>String(s??'').replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';');
+function B(n){n=+n||0;let i=0;while(n>=1024&&i<4){n/=1024;i++}return(i?n.toFixed(n<10?1:0):n|0)+' '+'БКМГТ'[i]+(i?'Б':'')}
+const Z=n=>(n<10?'0':'')+n,DT=(t,s)=>{const d=new Date(t*1e3);return s<86400?d.getUTCHours()+':'+Z(d.getUTCMinutes()):d.getUTCDate()+'.'+Z(d.getUTCMonth()+1)};
+const PAL=['#f75049','#5ef6ff','#1ded83','#f0b537','#9d2bf5','#fb932e','#2570d4'];
+function AV(n,on,L,c){return'<span class="av'+(L?' L':'')+'" style="color:'+PAL[c]+'">'+E([...n][0].toUpperCase())+(on?'<s></s>':'')+'</span>'}
+const K=(t,v,m)=>'<div class="k"><span class="m">'+E(t)+'</span><b>'+E(v)+'</b>'+(m?'<span class="m">'+E(m)+'</span>':'')+'</div>';
+const SG=(a,cur)=>'<div class="sg">'+a.map(x=>'<button data-k="'+x[0]+'"'+(x[0]==cur?' class="a"':'')+'>'+x[1]+'</button>').join('')+'</div>';
+const LG='<span class="q"></span>прокси <span class="q y"></span>VPN';
+const st=t=>$('st').textContent=t||'';
+function X(f,s,n){
+ const k=s<3600?12:s<86400?6:n>10?5:1;let h='<div class="ax">';
+ for(let i=s<86400?(k-f%k)%k:0;i<n;i+=k)h+='<span style="left:'+(i*100/n)+'%">'+DT((f+i)*s,s<3600?1:86400)+'</span>';
+ return h+'</div>'}
+function G(g){
+ const n=g.p.length,v=g.v||[],id=GS.push(g)-1,sel=S[V+id],w=n>10?8:4,o=(10-w)/2;let h='<div class="ch"><svg data-g="'+id+'" viewBox="0 0 '+n*10+' 100" preserveAspectRatio="none">';
+ g.p.forEach((x,i)=>{const y=v[i]||0;if(i===sel)h+='<rect class="z" x="'+i*10+'" width="10" height="100"/>';
+  if(x)h+='<rect x="'+(i*10+o)+'" y="'+(100-x)+'" width="'+w+'" height="'+x+'"/>';
+  if(y)h+='<rect class="y" x="'+(i*10+o)+'" y="'+(100-x-y-(x?4:0))+'" width="'+w+'" height="'+y+'"/>'});
+ h+='</svg></div>'+X(g.f,g.s,n)+'<div class="m">';
+ if(sel==null)return h+LG+' · пик '+B(g.mx)+' · тапни столбик</div>';
+ const a=(g.f+sel)*g.s;
+ return h+'<b>'+DT(a,g.s<86400?1:86400)+'</b> · 📡 '+B(g.p[sel]*g.mx/94)+(g.v?' · 🔐 '+B(v[sel]*g.mx/94):'')+'</div>'}
+function R(k,act,bg){
+ if(q)return;q=1;if(!bg)st('…');
+ try{W.request('3'+k).then(a=>{q=0;let j=null;try{j=JSON.parse(a.result)}catch(e){}
+  if(!j||j.err)return st(j&&j.err);
+  st(j.ok||'');if(act)return;
+  D[k]=j;draw()},e=>{q=0;if(!bg)st(e.code)})}
+ catch(e){q=0;st(String(e.message||e))}}
+function vo(o){
+ return'<div class="g">'+o.k.map(x=>K(x[0],x[1])).join('')+'</div><p class="m">'+E(o.n)+'</p>'+o.pb.map(p=>'<div class="r s'+({bad:3,warn:2}[p[1]]||1)+'"><span class="dt"></span>'+E(p[0])+'<i>'+E(p[2])+'</i></div>').join('')+(o.al.length?'<p>🔔 '+E(o.al.join(', '))+'</p>':'')+'<p class="m">'+E(o.ft)+'</p>'}
+function vp(p){
+ return p.u.map(x=>'<div class="r" data-k="u:'+E(x[0])+'">'+AV(x[0],x[1],0,x[4])+'<div class="f"><b>'+E(x[0])+'</b><span class="m">'+E(x[2])+'</span></div><i class="m">'+E(x[3])+' ›</i></div>').join('')
+ +'<div class="bs"><button data-k="!ad:p">➕ Прокси</button><button data-k="!ad:v">➕ VPN</button></div>'}
+function vt(j){
+ return SG([['t:1','24 часа'],['t:7','7 дней'],['t:30','30 дней']],V)+'<span class="big">'+E(j.tot)+'</span><div class="m">'+E(j.sp)+'</div>'+G(j.g)
+ +j.u.map(x=>'<div class="r" data-k="u:'+E(x[0])+'"><span class="nm">'+E(x[0])+'</span><div class="f"><div class="hb">'+(x[1]?'<u style="width:'+x[1]+'%"></u>':'')+(x[2]?'<u class="y" style="width:'+x[2]+'%"></u>':'')+'</div></div><i class="m">'+E(x[3])+'</i></div>').join('')}
+function va(j){
+ let h='<p class="m">'+E(j.hd)+'</p>';
+ j.u.forEach(x=>{h+='<div class="r" data-k="u:'+E(x[0])+'"><span class="nm">'+E(x[0])+'</span><svg class="tl" viewBox="0 0 48 1" preserveAspectRatio="none">';
+  for(let i=0;i<48;i++)if(x[1][i]>'0')h+='<rect x="'+i+'" width=".9" height="1" fill-opacity="'+(.15+x[1][i]*.085)+'"/>';
+  h+='</svg><i class="m">'+(x[3]&1?'📡':'')+(x[3]&2?'🔐':'')+' '+E(x[2])+'</i></div>'});
+ return h+'<div class="r"><span class="nm m">'+E(j.q)+'</span>'+X(j.f,1800,48)+'<i class="m">сейчас</i></div>'}
+function vu(u){
+ let h='<div class="r">'+AV(u.n,u.on,1,u.ci)+'<div class="f"><b>'+E(u.n)+'</b><span class="m">'+E(u.sub)+'</span></div></div><div class="g">'
+ +K('📡 ПРОКСИ',u.p.st,u.p.m)+K('🔐 VPN',u.v.st,u.v.m)+'</div>';
+ if(u.h&&u.h.mx)h+=SG([['h','24 часа'],['w','7 дней']],CW).replace(/data-k="/g,'data-k="~')+G(u[CW]&&u[CW].mx?u[CW]:u.h);
+ return h+'<div class="bs">'+(u.l?'<button data-k="c">📋 Копировать ссылку</button><button data-k="!sl:'+E(u.n)+'">📨 Ссылку в чат</button>':'')+(u.cf?'<button data-k="!sc:'+E(u.n)+'">📄 Конфиг VPN</button>':'')+'<button data-k="p">‹ Все люди</button></div>'}
+function draw(){GS=[];
+ [['to','o'],['tp','pu'],['tt','t'],['ta','a']].forEach(x=>$(x[0]).className=x[1].includes(V[0])?'a':'');
+ const o=D.o,sp=$('sp');sp.className='pl s'+(o?{ok:1,warn:2,bad:3}[o.s]||0:0);sp.textContent=o?o.sl:'…';
+ const j=D[V];
+ $('ag').textContent=j?'SYNC '+j.tm:'';
+ C.innerHTML=!j?'<p class="m">загружаю…</p>':({o:vo,p:vp,t:vt,a:va,u:vu})[V[0]](j)}
+const ga=(t,a)=>t.getAttribute&&t.getAttribute(a);
+document.addEventListener('click',e=>{
+ let t=e.target;while(t&&!ga(t,'data-k')&&ga(t,'data-g')==null)t=t.parentNode;if(!t)return;
+ const g=ga(t,'data-g');
+ if(g!=null){const r=t.getBoundingClientRect(),i=Math.floor((e.clientX-r.left)/r.width*GS[g].p.length);S[V+g]=S[V+g]===i?null:i;return draw()}
+ const k=ga(t,'data-k');
+ if(k=='c'){const u=D[V];if(u&&u.l)W.copyText(u.l);return}
+ if(k[0]=='~'){CW=k.slice(1);S={};return draw()}
+ if(k[0]=='!')return R(k.slice(1),1);
+ V=k;S={};draw();R(k)});
+W.onEvent('activated',()=>R(V,0,1));
+setInterval(()=>{if(W.isActive)R(V,0,1)},20000);
+draw();R(V,0,1);W.ready();
+</script>

@@ -13,6 +13,7 @@ from bot.web import create_web_app
 # Import handlers to register them on the router
 from bot import status  # noqa: F401  # команды владельца — ДО handlers: их catch-all регулярка иначе перехватит /status
 from bot import provision  # noqa: F401  # /config — выдача и создание доступов
+from bot import widgets  # noqa: F401  # /panel — живая панель-виджет (Bot API 10.4)
 from bot import handlers  # noqa: F401
 
 
@@ -59,7 +60,8 @@ async def run_all() -> None:
 
     # Bot polling
     try:
-        await dp.start_polling(bot)
+        # widget_query aiogram 3.31 не знает — добавляем вручную, иначе Telegram его не пришлёт
+        await dp.start_polling(bot, allowed_updates=[*dp.resolve_used_update_types(), "widget_query"])
     finally:
         await runner.cleanup()
 
