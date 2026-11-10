@@ -25,14 +25,16 @@ body{margin:0;padding:10px 12px}
    отдельных слоёв, а разметка полоски постоянная (иначе transition ширины не срабатывает). */
 .b{position:relative;height:14px;padding:3px;margin:10px 0 6px;border-radius:10px;overflow:hidden;background:rgba(0,0,0,.07);box-shadow:inset 0 1px 2px rgba(0,0,0,.14)}
 @media (prefers-color-scheme:dark){.b{background:rgba(0,0,0,.25);box-shadow:inset 0 1px 2px rgba(0,0,0,.25),0 1px rgba(255,255,255,.08)}}
-#jf{position:relative;width:0;height:100%;min-width:14px;border-radius:7px;overflow:hidden;background:#f9bcca;transition:width 2.8s linear,background-color 2.8s linear}
-.gl,.sp,.rw,.rb{position:absolute;top:0;bottom:0;left:0;right:0}
+#jf{position:relative;width:0;height:100%;min-width:14px;border-radius:7px;overflow:hidden;background:#4cd964;transition:width 2.8s linear}
+.gl,.sp,.rw,.rb{position:absolute;top:0;left:0;width:100%;height:100%}
 .gl{background:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.05))}
-.sp{left:-28px;background:linear-gradient(45deg,rgba(255,255,255,.22) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.22) 50%,rgba(255,255,255,.22) 75%,transparent 75%,transparent);background-size:28px 28px;animation:sp .9s linear infinite}
+/* плитку (background-size) движок не повторяет — полосы рисует один градиент на всю длину (см. STRIPES) */
+.sp{left:-28px;width:calc(100% + 28px);animation:sp .9s linear infinite}
 @keyframes sp{from{transform:translateX(0)}to{transform:translateX(28px)}}
-/* этапы без процента — переливающаяся радуга: полоса двойной ширины с повтором цветов едет на половину */
-.rw{top:3px;bottom:3px;left:3px;right:3px;border-radius:7px;overflow:hidden}
-.rb{right:auto;width:200%;background:linear-gradient(90deg,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964);animation:rb 2.5s linear infinite}
+/* радуга из примера — и в заливке, и на этапах без процента: слой двойной ширины пузыря (vw)
+   с повтором цветов едет на половину; цвета не сжимаются, растущая полоска открывает их больше */
+.rw{top:3px;left:3px;width:calc(100% - 6px);height:calc(100% - 6px);border-radius:7px;overflow:hidden}
+.rb{width:200vw;background:linear-gradient(90deg,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964);animation:rb 2.5s linear infinite}
 @keyframes rb{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 .a{display:flex;gap:8px;margin-top:10px}
 .a button{flex:1}
@@ -44,10 +46,6 @@ let tab = 'v', sb = 0, note = '', busy = 0;
 try { sb = +localStorage.sb || 0 } catch (e) {}
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
-// смесь двух цветов #rrggbb в пропорции t (0..1)
-const mix = (a, b, t) => '#' + [1, 3, 5].map(i => Math.round(
-  parseInt(a.slice(i, i + 2), 16) * (1 - t) + parseInt(b.slice(i, i + 2), 16) * t
-).toString(16).padStart(2, '0')).join('');
 
 function state() {
   try { return JSON.parse(W.chatData) || {} } catch (e) { return {} }
@@ -98,6 +96,16 @@ function pick(s) {
   return h;
 }
 
+// Косые полосы одним градиентом с явными точками: период вдоль линии 45° — 28/√2 px,
+// то есть 28 px по горизонтали, ровно на столько их сдвигает анимация sp
+const STRIPES = (() => {
+  const P = 28 / Math.SQRT2, c = 'rgba(255,255,255,.22)', g = [];
+  for (let i = 0; i < 48; i++) {
+    const a = (i * P).toFixed(1), b = (i * P + P / 2).toFixed(1), e = ((i + 1) * P).toFixed(1);
+    g.push(`${c} ${a}px`, `${c} ${b}px`, `transparent ${b}px`, `transparent ${e}px`);
+  }
+  return `linear-gradient(45deg,${g.join(',')})`;
+})();
 const $ = id => document.getElementById(id);
 const show = (id, on, how) => { $(id).style.display = on ? (how || 'block') : 'none' };
 let mode = '', lastB = null;
@@ -109,8 +117,9 @@ function job(s) {
     mode = 'job'; lastB = null;
     app.innerHTML = '<div class="q" id="jl"></div><div id="jt"></div>'
       + '<div class="b" id="jb"><div class="rw" id="jr"><span class="rb"></span><span class="gl"></span></div>'
-      + '<div id="jf"><span class="sp"></span><span class="gl"></span></div></div>'
+      + '<div id="jf"><span class="rb"></span><span class="sp" id="js"></span><span class="gl"></span></div></div>'
       + '<div class="n" id="jd"></div><div class="a" id="ja"></div><div id="jn" style="margin-top:6px"></div>';
+    $('js').style.backgroundImage = STRIPES;
   }
   $('jl').textContent = s.l || '';
   $('jt').className = s.k || 'n';
@@ -121,10 +130,7 @@ function job(s) {
     show('jr', ind);
     show('jf', !ind);
     if (!ind) {
-      const p = Math.min(100, s.p);
-      // видео — розовая, звук — оранжевая; по мере заполнения из светлой становится насыщенной
-      $('jf').style.width = p + '%';
-      $('jf').style.backgroundColor = s.w == 'a' ? mix('#fdd38a', '#fca311', p / 100) : mix('#f9bcca', '#ef476f', p / 100);
+      $('jf').style.width = Math.min(100, s.p) + '%';
     }
   }
   $('jd').textContent = s.d || '';

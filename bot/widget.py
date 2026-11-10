@@ -75,7 +75,11 @@ class AnswerWidgetQuery(TelegramMethod[bool]):
 
 def _load_html() -> str:
     html = Path(__file__).with_name("widget.html").read_text(encoding="utf-8")
-    return re.sub(r"<!--.*?-->", "", html, flags=re.S).strip()
+    html = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    # комментарии в CSS тоже уходят в Telegram и съедают лимит 4 КБ — вырезаем только в <style>
+    html = re.sub(r"<style>.*?</style>", lambda m: re.sub(r"/\*.*?\*/", "", m.group(0), flags=re.S),
+                  html, count=1, flags=re.S)
+    return html.strip()
 
 
 WIDGET_HTML = _load_html()
