@@ -79,6 +79,10 @@ def _load_html() -> str:
     # комментарии в CSS тоже уходят в Telegram и съедают лимит 4 КБ — вырезаем только в <style>
     html = re.sub(r"<style>.*?</style>", lambda m: re.sub(r"/\*.*?\*/", "", m.group(0), flags=re.S),
                   html, count=1, flags=re.S)
+    # и в <script>: строки-комментарии и отступы (комментарии в конце строки остаются — там бывают строки с //)
+    html = re.sub(r"<script>.*?</script>", lambda m: "\n".join(
+        line.strip() for line in m.group(0).splitlines()
+        if line.strip() and not line.strip().startswith("//")), html, count=1, flags=re.S)
     return html.strip()
 
 
@@ -305,7 +309,7 @@ class WidgetUI(SerialUI):
         if p is not None:
             state["p"] = round(p, 1)
         if w:
-            state["w"] = w  # цвет полоски: видео — розовая, звук — оранжевая
+            state["w"] = w  # цвет полоски: видео — красная, звук — циановая
         if d:
             state["d"] = d
         if b:

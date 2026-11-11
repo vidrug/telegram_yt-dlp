@@ -3,49 +3,66 @@
   HTML отправленного виджета изменить нельзя, поэтому он — тонкий рендерер:
   все тексты, статусы и кнопки присылает бот в chat_data (см. bot/widget.py).
   Лимит: 4096 байт после zlib -9.
+  Оформление — как у панели /panel (bot/widget_panel.html, docs/deployment-china.md, «Оформление»):
+  формы интерфейса Cyberpunk 2077, палитра из UI-гайда игры, фон виджет красит сам.
 -->
 <style>
-body{margin:0;padding:10px 12px}
-.t{display:flex;gap:6px;margin-bottom:8px}
-.t button{flex:1;padding:6px}
-.t button:not(.on){background:var(--tg-theme-secondary-bg-color);color:var(--tg-theme-text-color)}
-.r{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;margin-bottom:6px;border-radius:12px;background:var(--tg-theme-secondary-bg-color)}
-.r:active{background:var(--tg-theme-section-separator-color)}
-.q{font-weight:600}
-.m,.n{color:var(--tg-theme-hint-color);font-size:.85em}
-.e{color:var(--tg-theme-destructive-text-color)}
-.ok{color:var(--tg-theme-accent-text-color)}
-.s{display:flex;justify-content:space-between;align-items:center;padding:6px 2px}
-.w{flex:none;width:42px;height:24px;border-radius:12px;background:var(--tg-theme-hint-color);position:relative;transition:background .2s}
-.w:after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s}
-.w.on{background:var(--tg-theme-button-color)}
-.w.on:after{transform:translateX(18px)}
-/* полоска в духе codepen.io/evawythien/pen/jegRxN: утопленная дорожка, блик, бегущие полосы.
-   Родной рендерер Telegram не анимирует background-position, поэтому всё движение — transform
-   отдельных слоёв, а разметка полоски постоянная (иначе transition ширины не срабатывает). */
-.b{position:relative;height:14px;padding:3px;margin:10px 0 6px;border-radius:10px;overflow:hidden;background:rgba(0,0,0,.07);box-shadow:inset 0 1px 2px rgba(0,0,0,.14)}
-@media (prefers-color-scheme:dark){.b{background:rgba(0,0,0,.25);box-shadow:inset 0 1px 2px rgba(0,0,0,.25),0 1px rgba(255,255,255,.08)}}
-#jf{position:relative;width:0;height:100%;min-width:14px;border-radius:7px;overflow:hidden;background:#4cd964;transition:width 2.8s linear}
-.gl,.sp,.rw,.rb{position:absolute;top:0;left:0;width:100%;height:100%}
-.gl{background:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.05))}
-/* плитку (background-size) движок не повторяет — полосы рисует один градиент на всю длину (см. STRIPES) */
-.sp{left:-28px;width:calc(100% + 28px);animation:sp .9s linear infinite}
-@keyframes sp{from{transform:translateX(0)}to{transform:translateX(28px)}}
-/* радуга из примера — и в заливке, и на этапах без процента: слой двойной ширины пузыря (vw)
-   с повтором цветов едет на половину; цвета не сжимаются, растущая полоска открывает их больше */
-.rw{top:3px;left:3px;width:calc(100% - 6px);height:calc(100% - 6px);border-radius:7px;overflow:hidden}
-.rb{width:200vw;background:linear-gradient(90deg,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964,#5ac8fa,#007aff,#7dc8e8,#5856d6,#ff2d55,#4cd964);animation:rb 2.5s linear infinite}
-@keyframes rb{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-.a{display:flex;gap:8px;margin-top:10px}
-.a button{flex:1}
+*{box-sizing:border-box}
+body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 system-ui;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537}
+/* красное свечение шапки — отдельным слоем, а не фоном body: фон body движок повторяет, если блок выше содержимого */
+#gw{position:absolute;top:0;left:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
+#app{position:relative}
+.s0{--y:var(--l)}.s1{--y:#1ded83}.s3{--y:#f75049}
+#tt,.bd,.c b,#jt{letter-spacing:.05em}
+#h{display:flex;align-items:center;gap:8px;padding-bottom:7px;margin-bottom:8px;border-bottom:1px solid var(--l)}
+#hl{flex:1;white-space:nowrap}
+#tt{font:500 25px/1.1 system-ui}
+#pc{font:500 25px/1.1 system-ui;color:var(--c)}
+.bd{display:inline-block;flex:none;border:1px solid var(--y);color:var(--y);font:600 12px/1 system-ui;padding:3px 5px 3px 6px;white-space:nowrap}
+#sp{position:relative;top:-4px;margin-left:8px}
+/* ячейка: слева «скоба» цвета строки, контур со срезанным нижним правым углом; кнопка — плюс ступенька сверху */
+.c{position:relative;z-index:0;display:flex;align-items:center;gap:8px;min-width:0;padding:0 14px 0 17px;margin-bottom:4px}
+.gr{display:grid;gap:4px;margin:8px 0}
+.gr .c{margin:0;justify-content:center;padding:3px 4px 0 11px}
+.fr{position:absolute;left:0;top:0;width:100%;height:100%;z-index:-1;fill:rgba(247,80,73,.08);stroke:var(--l)}
+.fr .b{fill:var(--r);stroke:none}
+#jc .b{fill:var(--y)}
+.on>.fr{fill:rgba(247,80,73,.34);stroke:var(--r)}
+.c:active>.fr{fill:rgba(247,80,73,.34);stroke:var(--r)}
+.c b{color:var(--c);font:600 13px/1 system-ui}
+.on b{color:var(--w)}
+.lb{flex:1;min-width:0;color:var(--c);font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#jl{margin-bottom:8px}
+#jc{min-height:34px;padding:6px 14px 6px 17px}
+#jt{color:var(--w);font-weight:600;font-size:14px}
+.m{color:var(--h);font-size:13px}
+.c .m{white-space:nowrap}
+#jd{margin-top:4px}
+.e{color:var(--y)}
+/* полоска: сегменты, как у шкал в игре; по заливке бежит блик. Родной рендерер Telegram не анимирует
+   background-position и не повторяет плитку — движение только transform, сегменты — градиент из JS (SEG) */
+.tk{position:absolute;top:8px;left:15px;width:calc(100% - 31px);height:calc(100% - 16px);overflow:hidden}
+#jf{position:relative;width:0;height:100%;overflow:hidden;background:#f75049;transition:width 2.8s linear}
+.sw,.sg,.ib{position:absolute;top:0;left:0;height:100%}
+.sw{width:100%;background:linear-gradient(90deg,rgba(255,255,255,0) 30%,rgba(255,255,255,.5) 50%,rgba(255,255,255,0) 70%);animation:sw 1.6s linear infinite}
+@keyframes sw{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.sg{width:100vw}
+/* этапы без процента: жёлтый блок ездит по тусклой шкале */
+#jr{background:rgba(240,181,55,.12)}
+.ib{width:30%;background:#f0b537;animation:ib 1.4s linear infinite}
+@keyframes ib{from{transform:translateX(-100%)}to{transform:translateX(334%)}}
+/* кадр глитча: строка перекрашивается в циан с жёлтым (как переход вкладок в /panel) */
+.gz{color:#5ef6ff;--r:#5ef6ff;--l:#5ef6ff;--h:#5ef6ff;--c:#f0b537;--w:#f0b537}
 </style>
+<div id="gw"></div>
 <div id="app"></div>
 <script>
 const W = window.TelegramWidget, app = document.getElementById('app');
-let tab = 'v', sb = 0, note = '', busy = 0;
+let tab = 'v', sb = 0, note = '', busy = 0, Wd = 336;
 try { sb = +localStorage.sb || 0 } catch (e) {}
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
+const N = s => esc(String(s == null ? '' : s).toUpperCase());
 
 function state() {
   try { return JSON.parse(W.chatData) || {} } catch (e) { return {} }
@@ -77,79 +94,111 @@ function toggleSb() {
   draw();
 }
 
+// Рамки — inline-SVG в точных пикселях, как FR() в панели: clip-path в песочнице запрещён.
+// Только прямые отрезки — разборщик SVG в Telegram самодельный.
+const FR = (w, h, k) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path class="b" d="M0 1h4v' + (h - 2)
+  + 'h-4v-' + (h / 4 - .5) + 'l2-2v-' + (h / 2 - 5) + 'l-2-2z"/><path d="M7.5 1.5' + (k ? 'h' + (w * .3 | 0) + 'l4 4' : '')
+  + 'H' + (w - 1.5) + 'V' + (h - 9.5) + 'l-8 8H7.5z"/></svg>';
+// ячейка: n — сколько их в ряду, k — ступенька кнопки
+const CL = (x, n, k, on, click) => `<div class="c${on ? ' on' : ''}" style="height:34px" onclick="${click}">${FR((Wd + 4) / n - 4, 34, k)}${x}</div>`;
+const SG = a => `<div class="gr" style="grid-template-columns:${'1fr '.repeat(a.length)}">${a.join('')}</div>`;
+const HD = (t, x) => `<div id="h"><div id="hl"><span id="tt">${t}</span>${x || ''}</div><span id="pc"></span></div>`;
+
 function pick(s) {
   const L = { v: s.v || [], a: s.a || [] };
   const other = tab == 'v' ? 'a' : 'v';
   if (!L[tab].length && L[other].length) tab = other;
-  let h = '';
+  let h = HD('ФОРМАТ');
   if (L.v.length && L.a.length) {
-    h += '<div class="t">' + ['v', 'a'].map(t =>
-      `<button class="${t == tab ? 'on' : ''}" onclick="setTab('${t}')">${t == 'v' ? '🎬 Видео' : '🎵 Аудио'} ${L[t].length}</button>`
-    ).join('') + '</div>';
+    h += SG(['v', 'a'].map(t => CL(`<b>${t == 'v' ? 'ВИДЕО' : 'АУДИО'} ${L[t].length}</b>`, 2, 1, t == tab, `setTab('${t}')`)));
   }
   h += L[tab].map((o, i) =>
-    `<div class="r" onclick="choose('${tab}${i}')"><span class="q">${esc(o[0])}</span><span class="m">${esc(o[1])}</span></div>`
+    CL(`<span class="lb">${esc(o[0])}</span><span class="m">${esc(o[1])}</span>`, 1, 0, 0, `choose('${tab}${i}')`)
   ).join('');
   if (s.y) {
-    h += `<div class="s" onclick="toggleSb()"><span>✂️ Вырезать рекламу (SponsorBlock)</span><span class="w${sb ? ' on' : ''}"></span></div>`;
+    h += CL(`<span class="lb">✂️ Вырезать рекламу</span><span class="bd s${sb}">${sb ? 'ДА' : 'НЕТ'}</span>`, 1, 0, 0, 'toggleSb()');
   }
   return h;
 }
 
-// Косые полосы одним градиентом с явными точками: период вдоль линии 45° — 28/√2 px,
-// то есть 28 px по горизонтали, ровно на столько их сдвигает анимация sp.
-// Пустая полоса — прозрачный БЕЛЫЙ: transparent = rgba(0,0,0,0), и движок Telegram тянул полосы в чёрное
-const STRIPES = (() => {
-  const P = 28 / Math.SQRT2, c = 'rgba(255,255,255,.22)', z = 'rgba(255,255,255,0)', g = [];
-  for (let i = 0; i < 48; i++) {
-    const a = (i * P).toFixed(1), b = (i * P + P / 2).toFixed(1), e = ((i + 1) * P).toFixed(1);
-    g.push(`${c} ${a}px`, `${c} ${b}px`, `${z} ${b}px`, `${z} ${e}px`);
-  }
-  return `linear-gradient(45deg,${g.join(',')})`;
+// Сегменты шкалы одним градиентом с явными точками: 6 px заливки, 2 px зазора
+const SEG = (() => {
+  const z = 'rgba(14,14,23,0)', d = '#0e0e17', g = [];
+  for (let i = 0; i < 60; i++) g.push(`${z} ${i * 8}px`, `${z} ${i * 8 + 6}px`, `${d} ${i * 8 + 6}px`, `${d} ${i * 8 + 8}px`);
+  return `linear-gradient(90deg,${g.join(',')})`;
 })();
 const $ = id => document.getElementById(id);
-const show = (id, on, how) => { $(id).style.display = on ? (how || 'block') : 'none' };
-let mode = '', lastB = null;
+const show = (id, on) => { $(id).style.display = on ? 'block' : 'none' };
+let mode = '', lastB = null, lastF = '', stage = '';
+
+// Глитч при смене этапа, как переход вкладок в /panel: пять кадров по 40 мс, в каждом строка может
+// пропасть, сдвинуться и перекраситься. Копий нет — только visibility, transform и цвет.
+function GZ() {
+  let n = 5, r = Math.random;
+  clearInterval(GZ.t);
+  const f = () => {
+    for (let d = app.firstChild; d; d = d.nextSibling) {
+      d.style.visibility = n && r() * 6 < n ? 'hidden' : '';
+      d.style.transform = n && r() < .5 ? `translate(${r() * 40 - 20 | 0}px,${r() * 8 - 4 | 0}px)` : '';
+      d.classList.toggle('gz', !!n && r() < .5);
+    }
+    if (!n--) clearInterval(GZ.t);
+  };
+  f(); GZ.t = setInterval(f, 40);
+}
 
 // Ход скачивания: разметка создаётся один раз, дальше меняются только тексты,
-// ширина и цвет — так ширина плавно доезжает (transition), а полосы не перезапускаются
+// ширина и цвет — так ширина плавно доезжает (transition), а анимации не перезапускаются
 function job(s) {
   if (mode != 'job') {
-    mode = 'job'; lastB = null;
-    app.innerHTML = '<div class="q" id="jl"></div><div id="jt"></div>'
-      + '<div class="b" id="jb"><div class="rw" id="jr"><span class="rb"></span><span class="gl"></span></div>'
-      + '<div id="jf"><span class="rb"></span><span class="sp" id="js"></span><span class="gl"></span></div></div>'
-      + '<div class="n" id="jd"></div><div class="a" id="ja"></div><div id="jn" style="margin-top:6px"></div>';
-    $('js').style.backgroundImage = STRIPES;
+    mode = 'job'; lastB = null; lastF = ''; stage = '';
+    app.innerHTML = HD('ЗАГРУЗКА', '<span class="bd" id="sp"></span>') + '<div class="lb" id="jl"></div>'
+      + '<div class="c" id="jc"><span id="jcf"></span><span id="jt"></span></div>'
+      + `<div class="c" id="jb" style="height:30px">${FR(Wd, 30, 0)}<div class="tk" id="jr"><span class="ib"></span><span class="sg" id="g1"></span></div>`
+      + '<div class="tk" id="jk"><div id="jf"><span class="sw"></span><span class="sg" id="g2"></span></div></div></div>'
+      + '<div class="m" id="jd"></div><div id="ja"></div><div class="m" id="jn"></div>';
+    $('g1').style.backgroundImage = $('g2').style.backgroundImage = SEG;
   }
+  const p = s.p, st = s.k == 'e' ? 3 : s.k == 'ok' ? 1 : p == null ? 0 : 2;
+  $('sp').className = 'bd s' + st;
+  $('sp').textContent = ['СТОП', 'ГОТОВО', s.w == 'v' ? 'ВИДЕО' : s.w == 'a' ? 'АУДИО' : 'В РАБОТЕ', 'ОШИБКА'][st];
+  $('pc').textContent = p >= 0 ? Math.floor(p) + '%' : '';
   $('jl').textContent = s.l || '';
-  $('jt').className = s.k || 'n';
-  $('jt').textContent = s.t || '';
-  show('jb', s.p != null);
-  if (s.p != null) {
-    const ind = s.p < 0;
-    show('jr', ind);
-    show('jf', !ind);
-    if (!ind) {
-      $('jf').style.width = Math.min(100, s.p) + '%';
+  // эмодзи в начале и «— 45%» в конце убираем: этап — бейджем, процент — в шапке
+  const t = String(s.t || '').replace(/^[^0-9A-Za-zА-яЁё]+/, '').replace(/\s*—\s*\d+%$/, '').toUpperCase();
+  $('jt').textContent = t;
+  $('jc').className = 'c s' + st;
+  // рамку статуса — под его высоту (текст бывает в две строки)
+  const f = Wd + 'x' + $('jc').offsetHeight;
+  if (f != lastF) { lastF = f; $('jcf').innerHTML = FR(Wd, $('jc').offsetHeight || 34, 0) }
+  show('jb', p != null);
+  if (p != null) {
+    show('jr', p < 0);
+    show('jk', p >= 0);
+    if (p >= 0) {
+      $('jf').style.width = Math.min(100, p) + '%';
+      // видео красное, звук циановый — как прокси и VPN в панели
+      $('jf').style.background = s.w == 'a' ? '#5ef6ff' : '#f75049';
     }
   }
   $('jd').textContent = s.d || '';
-  const b = JSON.stringify(s.b || []);
-  if (b != lastB) {  // кнопки пересоздаём только при изменении — не сбивать нажатие
+  const bl = s.b || [], b = JSON.stringify(bl);
+  // кнопки пересоздаём только при изменении — не сбивать нажатие
+  if (b != lastB) {
     lastB = b;
-    $('ja').innerHTML = (s.b || []).map((x, i) => `<button onclick="act(${i})">${esc(x[0])}</button>`).join('');
-    show('ja', s.b && s.b.length, 'flex');
+    $('ja').innerHTML = bl.length ? SG(bl.map((x, i) => CL(`<b>${N(x[0])}</b>`, bl.length, 1, 0, `act(${i})`))) : '';
   }
-  $('jn').className = note == '⏳' ? 'n' : 'n e';
+  $('jn').className = note == '⏳' ? 'm' : 'm e';
   $('jn').textContent = note;
+  if (stage != st + t) { stage = st + t; GZ() }
 }
 
 function draw() {
+  Wd = app.offsetWidth || Wd;
   const s = state();
   if (s.s == 'job') return job(s);
   mode = 'pick';
-  app.innerHTML = pick(s) + (note ? `<div class="n${note == '⏳' ? '' : ' e'}" style="margin-top:6px">${esc(note)}</div>` : '');
+  app.innerHTML = pick(s) + (note ? `<div class="m${note == '⏳' ? '' : ' e'}" style="margin-top:6px">${esc(note)}</div>` : '');
 }
 
 W.onEvent('chatDataChanged', () => { note = ''; draw() });
