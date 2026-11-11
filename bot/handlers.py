@@ -48,7 +48,7 @@ from bot.formats import (
 )
 from bot.jobs import SerialUI, cookie_prompt, find_format, run_download
 from bot.state import awaiting_cookies, bot, executor, router, sessions, user_downloads
-from bot.widget import send_picker, session_caption, start_progress
+from bot.widget import send_full, send_picker, session_caption, start_progress
 
 
 @router.message(CommandStart())
@@ -258,6 +258,10 @@ async def handle_raw_formats(callback: CallbackQuery, callback_data: RawFormatsC
 
     raw = s.get("raw_formats", [])
     s["awaiting_format"] = True  # ручной ввод формата текстом работает и при таблице
+
+    # в личке — виджетом в стиле первого экрана; иначе (или если не вышло) — нативной таблицей
+    if callback.message.chat.type == "private" and await send_full(callback.message.chat.id, sid, s):
+        return
 
     try:
         # Интерактивная нативная таблица (Bot API 10.3+): ID формата — кнопка

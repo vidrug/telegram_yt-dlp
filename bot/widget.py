@@ -12,6 +12,9 @@ HTML отправленного виджета изменить нельзя, п
    полоска), "w": "v"|"a", "d": детали, "b": [[текст, запрос], ...]}  — ход скачивания
 Запросы виджета: g:<строка.столбец>:<звук>:<sb> — скачать (любой из двух ключей может
 быть пустым), r — повторить, x — отменить, b — вернуться к выбору формата.
+«📋 Все форматы» — отдельный виджет (bot/widget_full.html, состояние — full_state):
+p:<v|a>:<страница> — строки страницы в ответе, f:<видео>:<звук>:<sb> — скачать
+(прогресс — новым виджетом, как из нативной таблицы).
 """
 
 import asyncio
@@ -185,8 +188,8 @@ def minify_js(src: str) -> str:
     return "".join(out)
 
 
-def _load_html() -> str:
-    html = Path(__file__).with_name("widget.html").read_text(encoding="utf-8")
+def _load_html(name: str) -> str:
+    html = Path(__file__).with_name(name).read_text(encoding="utf-8")
     html = re.sub(r"<!--.*?-->", "", html, flags=re.S)
     # комментарии и переводы строк в CSS тоже уходят в Telegram и съедают лимит 4 КБ
     html = re.sub(r"<style>.*?</style>", lambda m: re.sub(r"\n+", "", re.sub(r"/\*.*?\*/", "", m.group(0), flags=re.S)),
@@ -195,7 +198,8 @@ def _load_html() -> str:
     return html.strip()
 
 
-WIDGET_HTML = _load_html()
+WIDGET_HTML = _load_html("widget.html")      # первый экран и ход скачивания
+FULL_HTML = _load_html("widget_full.html")   # «📋 Все форматы»
 
 # Включаются после probe(), если локальный Bot API сервер знает методы 10.4
 available = False
@@ -207,10 +211,11 @@ async def probe() -> bool:
     available = False
     if not (USE_WIDGETS or WIDGET_PROGRESS):
         return False
-    compressed = len(zlib.compress(WIDGET_HTML.encode(), 9))
-    if compressed > 4096:
-        log.error("widget.html is %d bytes compressed (limit 4096), widgets disabled", compressed)
-        return False
+    for name, html in (("widget.html", WIDGET_HTML), ("widget_full.html", FULL_HTML)):
+        compressed = len(zlib.compress(html.encode(), 9))
+        if compressed > 4096:
+            log.error("%s is %d bytes compressed (limit 4096), widgets disabled", name, compressed)
+            return False
     try:
         await bot(AnswerWidgetQuery(widget_query_id="0"))
         available = True
@@ -239,8 +244,11 @@ async def set_state(chat_id: int, message_id: int, state: dict) -> None:
             log.warning("widget state update failed: %s", e)
 
 
-async def _answer(query_id: str, error: str | None = None) -> None:
-    data = json.dumps({"e": error}, ensure_ascii=False) if error else None
+async def _answer(query_id: str, error: str | None = None, payload: dict | None = None) -> None:
+    """Ответить на запрос виджета: ошибкой ({"e": текст}) или данными (payload)."""
+    if error:
+        payload = {"e": error}
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) if payload else None
     try:
         await bot(AnswerWidgetQuery(widget_query_id=query_id, data=data))
     except TelegramAPIError as e:
@@ -358,6 +366,75 @@ def selection(s: dict, vkey: str, akey: str) -> tuple[str, str, str] | None:
         str(v["format_id"]) if v else None, f"{video_quality(v)} {codec_name(v)}" if v else "", muxed,
         str(a["format_id"]) if a else None, fulltable._audio_kind(a) if a else "",
     )
+
+
+# ---------------------------------------------------------------------------
+# «📋 Все форматы» виджетом: компактная таблица с листанием (bot/widget_full.html)
+# ---------------------------------------------------------------------------
+
+FULL_ROWS = 14  # строк таблицы на экране (по 24 px): с итогом в две строки, SponsorBlock, кнопками и ошибкой — до 600 px
+FULL_HINT = "\n\n✍️ Или пришли формат текстом: <code>315+251</code>, <code>bestvideo+bestaudio</code>"
+
+
+def _full_row(f: dict, video: bool) -> list:
+    if not video:
+        return [str(f["format_id"]), fulltable._audio_kind(f), fulltable._audio_tags(f), _mb(f)]
+    row = [str(f["format_id"]), video_quality(f), codec_name(f), _mb(f)]
+    if fulltable._muxed(f):
+        row.append(1)  # звук внутри
+    return row
+
+
+def _full_page(s: dict, kind: str, page: int) -> list[list]:
+    items = s["full"]["video" if kind == "v" else "audio"]
+    size = s["full_ps"][0 if kind == "v" else 1]
+    return [_full_row(f, kind == "v") for f in items[page * size:(page + 1) * size]]
+
+
+def full_state(s: dict) -> dict:
+    """Первая страница видео и звука; строки на экране делятся между секциями.
+
+    Звуку — не меньше 4 строк (или сколько есть), остальное — видео. Если первые страницы
+    не влезают в 1024 байта chat_data (длинные ID на некоторых сайтах), страницы уменьшаются.
+    """
+    nv, na = len(s["full"]["video"]), len(s["full"]["audio"])
+    pa = min(na, max(4, FULL_ROWS - nv))
+    pv = min(nv, FULL_ROWS - pa)
+    while True:
+        s["full_ps"] = (pv, pa)
+        state = {
+            "s": "full", "c": [nv, na],
+            "n": [-(-nv // pv) if pv else 0, -(-na // pa) if pa else 0], "p": [pv, pa],
+            "v": _full_page(s, "v", 0), "a": _full_page(s, "a", 0), "y": int(is_youtube(s["url"])),
+        }
+        if len(_dump(state).encode()) <= MAX_DATA_BYTES or pv + pa <= 2:
+            return state
+        if pv >= pa:
+            pv -= 1
+        else:
+            pa -= 1
+
+
+async def send_full(chat_id: int, sid: str, s: dict) -> bool:
+    """Отправить «Все форматы» виджетом. False — показать нативной таблицей.
+
+    Скачивание отсюда показывает прогресс отдельным виджетом, поэтому нужен и WIDGET_PROGRESS.
+    """
+    if not (available and USE_WIDGETS and WIDGET_PROGRESS):
+        return False
+    fulltable.prepare(s)
+    if not s["full"]["video"] and not s["full"]["audio"]:
+        return False
+    try:
+        msg = await bot(SendWidget(
+            chat_id=chat_id, html=FULL_HTML, chat_data=_dump(full_state(s)),
+            caption=session_caption(s) + FULL_HINT, parse_mode="HTML", allow_queries=True,
+        ))
+    except TelegramAPIError as e:
+        log.warning("full formats widget failed, falling back to the rich table: %s", e)
+        return False
+    widget_sessions[(chat_id, msg.message_id)] = sid
+    return True
 
 
 def session_caption(s: dict) -> str:
@@ -516,8 +593,10 @@ async def start_progress(
         log.warning("progress widget failed, falling back to text: %s", e)
         return False
     widget_sessions[(chat_id, msg.message_id)] = sid
-    s["wsel"] = {"fmt": fmt_id, "label": label, "sb": sponsorblock,
-                 "category": category, "send_as": send_as, "standalone": True}
+    s.setdefault("wsel", {})[msg.message_id] = {
+        "fmt": fmt_id, "label": label, "sb": sponsorblock,
+        "category": category, "send_as": send_as, "standalone": True,
+    }
     _start_job(chat_id, msg.message_id, sid, s, user_id)
     return True
 
@@ -530,7 +609,7 @@ _tasks: set[asyncio.Task] = set()
 
 
 def _start_job(chat_id: int, message_id: int, sid: str, s: dict, user_id: int) -> None:
-    sel = s["wsel"]
+    sel = s["wsel"][message_id]
     cancel = threading.Event()
     s["job"] = cancel
     ui = WidgetUI(chat_id, message_id, sel["label"], sel["sb"], standalone=sel["standalone"])
@@ -586,11 +665,11 @@ async def handle_query(q: dict) -> None:
                 await _answer(query_id, "Формат не найден — отправь ссылку заново")
                 return
             selector, send_as, label = chosen
-            s["wsel"] = {
+            s.setdefault("wsel", {})[message_id] = {
                 "fmt": selector, "label": label, "sb": sb_flag == "1",
                 "category": "pair", "send_as": send_as, "standalone": False,
             }
-        elif not s.get("wsel"):
+        elif message_id not in s.get("wsel", {}):
             await _answer(query_id, "Сначала выбери формат")
             return
         if user_downloads.get(user_id, 0) >= MAX_CONCURRENT_PER_USER:
@@ -598,6 +677,19 @@ async def handle_query(q: dict) -> None:
             return
         await _answer(query_id)
         _start_job(chat_id, message_id, sid, s, user_id)
+
+    elif cmd == "p":
+        kind, _, page = arg.partition(":")
+        rows = _full_page(s, kind, int(page)) if kind in ("v", "a") and page.isdigit() and "full_ps" in s else []
+        if not rows:
+            await _answer(query_id, "Открой «Все форматы» заново")
+            return
+        while len(json.dumps({"r": rows}, ensure_ascii=False).encode()) > MAX_DATA_BYTES and len(rows) > 1:
+            rows.pop()  # ответ тоже до 1024 байт; номера строк у виджета от этого не сдвигаются
+        await _answer(query_id, payload={"r": rows})
+
+    elif cmd == "f":
+        await _full_download(query_id, s, sid, arg, chat_id=chat_id, user_id=user_id)
 
     elif cmd == "x":
         await _answer(query_id)
@@ -617,6 +709,38 @@ async def handle_query(q: dict) -> None:
 
     else:
         await _answer(query_id, "Неизвестная команда")
+
+
+async def _full_download(query_id: str, s: dict, sid: str, arg: str, *, chat_id: int, user_id: int) -> None:
+    """«Скачать» в «Все форматы»: f:<номер видео>:<номер звука>:<sb> — прогресс отдельным виджетом."""
+    if s.get("job"):
+        await _answer(query_id, "Уже скачиваю — дождись или отмени")
+        return
+    full = s.get("full")
+    vkey, akey, sb_flag = (arg.split(":") + ["", ""])[:3]
+    try:
+        vi = int(vkey) if vkey else None
+        ai = int(akey) if akey else None
+        if full is None or (vi is not None and not 0 <= vi < len(full["video"])) or (
+                ai is not None and not 0 <= ai < len(full["audio"])):
+            raise IndexError(arg)
+    except (ValueError, IndexError):
+        await _answer(query_id, "Формат не найден — открой «Все форматы» заново")
+        return
+    s["full_sel"] = {"v": vi, "a": ai, "sb": sb_flag == "1"}
+    chosen = fulltable.selection(s)
+    if not chosen:
+        await _answer(query_id, "Выбери видео и/или звук")
+        return
+    if user_downloads.get(user_id, 0) >= MAX_CONCURRENT_PER_USER:
+        await _answer(query_id, f"Не больше {MAX_CONCURRENT_PER_USER} скачиваний сразу — подожди")
+        return
+    selector, send_as, label = chosen
+    if await start_progress(chat_id, sid, s, user_id, fmt_id=selector, label=label,
+                            sponsorblock=sb_flag == "1", category="pair", send_as=send_as):
+        await _answer(query_id)
+    else:
+        await _answer(query_id, "Не получилось начать — попробуй ещё раз")
 
 
 def _is_download_query(query: dict) -> bool:

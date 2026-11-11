@@ -1,0 +1,141 @@
+<!--
+  Виджет «📋 Все форматы» (Bot API 10.4): все форматы ролика компактной таблицей в стиле панели /panel.
+  Видео и звук — две секции на одном экране, тапом выбирается по одному из каждой (повторный снимает).
+  Не влезает на экран — секция листается (‹ 1/3 ›): страницы бот отдаёт в ответах на запросы p:<v|a>:<n>.
+  «Скачать» шлёт f:<номер видео>:<номер звука>:<sb>, ход скачивания бот показывает отдельным виджетом.
+  chat_data (см. full_state в bot/widget.py):
+    {"s": "full", "c": [видео, звук] — сколько всего, "n": [страниц], "p": [строк на странице],
+     "v": [[id, качество, кодек, МБ, 1 — звук внутри], ...], "a": [[id, звук, язык, МБ], ...], "y": 1}
+  Лимит: 4096 байт после zlib -9; комментарии и пробелы бот вырезает перед отправкой.
+-->
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 system-ui;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537}
+#gw{position:absolute;top:0;left:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
+#app{position:relative}
+.s0{--y:var(--l)}.s1{--y:#1ded83}
+#tt,.bd,.c b,.sh,.sm{letter-spacing:.05em}
+#h{padding-bottom:7px;border-bottom:1px solid var(--l)}
+#tt{font:500 25px/1.1 system-ui}
+.bd{border:1px solid var(--y);color:var(--y);font:600 12px/1 system-ui;padding:3px 5px 3px 6px;white-space:nowrap}
+.c{position:relative;z-index:0;display:flex;align-items:center;gap:8px;min-width:0;padding:0 14px 0 17px;margin-bottom:4px}
+.gr{display:grid;gap:4px;margin:8px 0 0}
+.gr .c{margin:0;justify-content:center;padding:3px 4px 0 11px}
+.fr{position:absolute;left:0;top:0;width:100%;height:100%;z-index:-1;fill:rgba(247,80,73,.08);stroke:var(--l)}
+.fr .b{fill:var(--r);stroke:none}
+.on>.fr{fill:rgba(247,80,73,.34);stroke:var(--r)}
+.c b{color:var(--c);font:600 13px/1 system-ui}
+.on b,.on span{color:var(--w)}
+.lb{flex:1;color:var(--c);font-size:14px;font-weight:500}
+/* строка таблицы: ID · качество (или звук) · кодек (или язык) · размер */
+.t{margin-bottom:2px;padding:0 10px 0 13px;gap:6px;font-size:13px}
+.t span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.i{width:54px;flex:none;color:var(--h)}
+.q{width:76px;flex:none;color:var(--c);font-weight:600}
+.k{flex:1;color:var(--c)}
+/* заголовок секции: название, число форматов и листалка */
+.sh{display:flex;align-items:center;margin:8px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--l);color:var(--h);font:600 12px/18px system-ui}
+.sh span{flex:1}
+.sh i{font:600 16px/18px system-ui;padding:0 10px;color:var(--c)}
+.sm{margin:8px 0 6px;color:var(--w);font-weight:600;font-size:13px}
+.m{color:var(--y);font-size:13px;margin-top:4px}
+.gz{color:#5ef6ff;--r:#5ef6ff;--l:#5ef6ff;--h:#5ef6ff;--c:#f0b537;--w:#f0b537}
+</style>
+<div id="gw"></div>
+<div id="app"></div>
+<script>
+const W = window.TelegramWidget, $ = i => document.getElementById(i), app = $('app');
+// Выбор: sv / sa — номера видео и звука во всём списке (-1 — нет), SV / SA — их строки:
+// итог нужен и когда выбранная строка на другой странице. P — полученные страницы, pg — открытые
+let sv = -1, sa = -1, SV, SA, sb = 0, note = '', busy = 0, Wd = 336, D, P, pg = { v: 0, a: 0 }, first = 1;
+try { sb = +localStorage.sb || 0 } catch (e) {}
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';'), N = s => esc(s).toUpperCase();
+const say = t => { note = t; draw() };
+const load = () => { try { D = JSON.parse(W.chatData) || {} } catch (e) { D = {} } P = { v: [D.v], a: [D.a] } };
+const K = t => t == 'v' ? 0 : 1;
+
+// Запрос к боту — строго синхронно в обработчике тапа (правило песочницы); ok — что сделать с ответом
+function ask(d, ok) {
+  if (busy) return;
+  let p;
+  try { p = W.request(d) } catch (e) { return say(e.message) }
+  busy = 1; say('⏳');
+  p.then(a => { let r = {}; try { r = JSON.parse(a.result || '{}') } catch (e) {} note = r.e || ''; r.e || !ok || ok(r) },
+    e => { note = e.code == 'RATE_LIMITED' ? 'Подожди пару секунд' : e.code })
+    .finally(() => { busy = 0; draw() });
+}
+
+// Листание секции t на d страниц; полученные страницы не запрашиваются повторно
+function flip(t, d) {
+  const n = pg[t] + d;
+  if (n < 0 || n >= D.n[K(t)]) return;
+  if (P[t][n]) { pg[t] = n; return draw() }
+  ask('p:' + t + ':' + n, r => { P[t][n] = r.r; pg[t] = n });
+}
+const row = (t, g) => P[t][pg[t]][g - pg[t] * D.p[K(t)]];
+// Тап по видео: повторный снимает выбор; видео со звуком внутри снимает отдельный звук.
+// Звук к такому видео не выбирается — итог и так пишет «со звуком»
+function tv(g) { SV = row('v', g); sv = sv == g ? -1 : g; if (sv >= 0 && SV[4]) sa = -1; draw() }
+function ta(g) { if (sv < 0 || !SV[4]) { SA = row('a', g); sa = sa == g ? -1 : g } draw() }
+function clr() { sv = sa = -1; draw() }
+function tsb() { sb = 1 - sb; try { localStorage.sb = sb } catch (e) {} draw() }
+function dl() { (sv >= 0 || sa >= 0) && ask('f:' + (sv < 0 ? '' : sv) + ':' + (sa < 0 ? '' : sa) + ':' + sb) }
+
+const MB = x => !x ? '?' : x >= 1024 ? (x / 1024).toFixed(1) + 'G' : (x < 10 ? +x.toFixed(1) : Math.round(x)) + 'M';
+// Рамки — inline-SVG в точных пикселях, как FR() в панели (clip-path в песочнице запрещён)
+const FR = (w, h, k) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path class="b" d="M0 1h4v' + (h - 2)
+  + 'h-4v-' + (h / 4 - .5) + 'l2-2v-' + (h / 2 - 5) + 'l-2-2z"/><path d="M7.5 1.5' + (k ? 'h' + (w * .3 | 0) + 'l4 4' : '')
+  + 'H' + (w - 1.5) + 'V' + (h - 9.5) + 'l-8 8H7.5z"/></svg>';
+const CL = (x, w, k, on, f, h = 34, c = '') => `<div class="c${c}${on ? ' on' : ''}" style="height:${h}px" onclick="${f}">${FR(w, h, k)}${x}</div>`;
+const CW = n => (Wd + 4) / n - 4;
+
+// Секция таблицы: заголовок с листалкой и строки открытой страницы
+function sec(t, name) {
+  const k = K(t), n = D.n[k];
+  if (!D.c[k]) return '';
+  return `<div class="sh"><span>${name} ${D.c[k]}</span>`
+    + (n > 1 ? `<i onclick="flip('${t}',-1)">‹</i>${pg[t] + 1}/${n}<i onclick="flip('${t}',1)">›</i>` : '') + '</div>'
+    + P[t][pg[t]].map((x, i) => {
+      const g = pg[t] * D.p[k] + i;
+      return CL(`<span class="i">${esc(x[0])}</span><span class="q">${N(x[1])}</span><span class="k">${N(x[2])}</span><b>${MB(x[3])}${x[4] ? '♪' : ''}</b>`,
+        CW(1), 0, (t == 'v' ? sv : sa) == g, `t${t}(${g})`, 22, ' t');
+    }).join('');
+}
+
+// Появление с глитчем, как переход вкладок в /panel: пять кадров по 40 мс
+function GZ() {
+  let n = 5, r = Math.random;
+  const f = () => {
+    for (let d = app.firstChild; d; d = d.nextSibling) {
+      d.style.visibility = n && r() * 6 < n ? 'hidden' : '';
+      d.style.transform = n && r() < .5 ? `translate(${r() * 40 - 20 | 0}px,${r() * 8 - 4 | 0}px)` : '';
+      d.classList.toggle('gz', !!n && r() < .5);
+    }
+    n-- || clearInterval(t);
+  }, t = setInterval(f, 40);
+  f();
+}
+
+function draw() {
+  Wd = app.offsetWidth || Wd;
+  let h = '<div id="h"><span id="tt">ВСЕ ФОРМАТЫ</span></div>';
+  // сессия истекла — бот присылает только текст
+  if (D.s != 'full') return app.innerHTML = h + `<div class="sm">${esc(D.t)}</div>`;
+  // итог: что выбрано (с ID) и сколько весит, если размеры известны
+  const mx = sv >= 0 && SV[4], a = sa >= 0 && !mx && SA;
+  const t = [sv >= 0 && SV[1] + ' ' + SV[2] + ' (' + SV[0] + ')' + (mx ? ' со звуком' : a ? '' : ' без звука'), a && a[1] + ' (' + a[0] + ')']
+    .filter(Boolean).join(' + ');
+  const vm = sv >= 0 ? SV[3] : 0, am = a ? a[3] : 0;
+  h += sec('v', 'ВИДЕО') + sec('a', 'ЗВУК')
+    + `<div class="sm">${t ? N(t) + ((sv < 0 || vm) && (!a || am) ? ' ≈ ' + MB(vm + am) : '') : 'ВЫБЕРИ ВИДЕО И ЗВУК'}</div>`;
+  if (D.y) h += CL(`<span class="lb">✂️ Вырезать рекламу</span><span class="bd s${sb}">${sb ? 'ДА' : 'НЕТ'}</span>`, CW(1), 0, 0, 'tsb()', 30);
+  app.innerHTML = h + `<div class="gr" style="grid-template-columns:1fr 1fr">${CL('<b>СКАЧАТЬ</b>', CW(2), 1, t, 'dl()')}${CL('<b>СБРОС</b>', CW(2), 1, 0, 'clr()')}</div>`
+    + (note ? `<div class="m">${esc(note)}</div>` : '');
+  if (first) { first = 0; GZ() }
+}
+
+W.onEvent('chatDataChanged', () => { note = ''; load(); draw() });
+load();
+draw();
+W.ready();
+</script>
