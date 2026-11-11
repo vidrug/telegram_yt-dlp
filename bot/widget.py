@@ -372,7 +372,10 @@ def selection(s: dict, vkey: str, akey: str) -> tuple[str, str, str] | None:
 # «📋 Все форматы» виджетом: компактная таблица с листанием (bot/widget_full.html)
 # ---------------------------------------------------------------------------
 
-FULL_ROWS = 14  # строк таблицы на экране (по 24 px): с итогом в две строки, SponsorBlock, кнопками и ошибкой — до 600 px
+# Плитки «Все форматы»: видео по три в ряд, звук по два; рядов на экране (по 50 px) — с легендой,
+# итогом в две строки, SponsorBlock, кнопками и ошибкой укладывается в 600 px
+FULL_TILE_ROWS = 5
+FULL_COLS = (3, 2)
 FULL_HINT = "\n\n✍️ Или пришли формат текстом: <code>315+251</code>, <code>bestvideo+bestaudio</code>"
 
 
@@ -392,14 +395,16 @@ def _full_page(s: dict, kind: str, page: int) -> list[list]:
 
 
 def full_state(s: dict) -> dict:
-    """Первая страница видео и звука; строки на экране делятся между секциями.
+    """Первая страница видео и звука; ряды плиток на экране делятся между секциями.
 
-    Звуку — не меньше 4 строк (или сколько есть), остальное — видео. Если первые страницы
+    Звуку — не меньше 2 рядов (или сколько нужно), остальное — видео. Если первые страницы
     не влезают в 1024 байта chat_data (длинные ID на некоторых сайтах), страницы уменьшаются.
     """
     nv, na = len(s["full"]["video"]), len(s["full"]["audio"])
-    pa = min(na, max(4, FULL_ROWS - nv))
-    pv = min(nv, FULL_ROWS - pa)
+    cv, ca = FULL_COLS
+    rows_a = min(-(-na // ca), max(2, FULL_TILE_ROWS - -(-nv // cv)))
+    rows_v = min(-(-nv // cv), FULL_TILE_ROWS - rows_a)
+    pv, pa = rows_v * cv, rows_a * ca
     while True:
         s["full_ps"] = (pv, pa)
         state = {
