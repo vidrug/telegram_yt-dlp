@@ -24,13 +24,15 @@ async def on_startup() -> None:
     log.info("Bot starting, using API at %s", API_URL)
 
     # Переключение с официального API на локальный (нужно один раз)
+    official_bot = Bot(token=BOT_TOKEN)
     try:
-        official_bot = Bot(token=BOT_TOKEN)
         await official_bot.log_out()
-        await official_bot.session.close()
         log.info("Logged out from official API, switched to local")
     except Exception as e:
         log.info("logOut skipped (already local or cooldown): %s", e)
+    finally:
+        # и при отказе тоже — иначе aiohttp пишет в лог «Unclosed client session»
+        await official_bot.session.close()
 
     await bot.delete_webhook(drop_pending_updates=True)
     await status.register_owner_commands()
