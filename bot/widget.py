@@ -6,11 +6,12 @@ aiogram 3.31 знает только Bot API 10.3, поэтому методы �
 
 HTML отправленного виджета изменить нельзя, поэтому bot/widget.html — тонкий
 рендерер, а все тексты, статусы и кнопки задаются здесь, в chat_data:
-  {"s": "pick", "v": [[качество, детали], ...], "a": [...], "y": 1}  — выбор формата
+  {"s": "pick", "c": [кодеки], "r": [[качество, [ячейка по кодекам]], ...],
+   "a": [[звук, МБ], ...], "y": 1}                                    — выбор формата
   {"s": "job", "l": что качаем, "t": статус, "k": "e"|"ok", "p": % (-1 — бегущая
-   полоска), "d": детали, "b": [[текст, запрос], ...]}               — ход скачивания
-Запросы виджета: d:<v|a><i>:<sb> — скачать, r — повторить, x — отменить,
-b — вернуться к выбору формата.
+   полоска), "w": "v"|"a", "d": детали, "b": [[текст, запрос], ...]}  — ход скачивания
+Запросы виджета: g:<строка.столбец>:<звук>:<sb> — скачать (любой из двух ключей может
+быть пустым), r — повторить, x — отменить, b — вернуться к выбору формата.
 """
 
 import asyncio
@@ -18,6 +19,7 @@ import json
 import re
 import threading
 import zlib
+from collections import Counter
 from html import escape
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -30,13 +32,12 @@ from bot.callbacks import ClassicCallback, RawFormatsCallback
 from bot.config import MAX_CONCURRENT_PER_USER, USE_WIDGETS, WIDGET_PROGRESS, log
 from bot.cookies import is_youtube
 from bot.downloader import progress_info, progress_track
-from bot.formats import fmt_bytes, format_filesize, video_quality
+from bot import fulltable
+from bot.formats import CODEC_ORDER, codec_name, fmt_bytes, format_filesize, pair_selector, video_quality
 from bot.jobs import SerialUI, cookie_prompt, run_download
 from bot.state import bot, dp, sessions, user_downloads, widget_sessions
 
 MAX_DATA_BYTES = 1024  # chat_data и ответ на запрос
-MAX_VIDEO_ROWS = 9     # с вкладками и SponsorBlock — в пределах ~560 px высоты
-MAX_AUDIO_ROWS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -73,16 +74,124 @@ class AnswerWidgetQuery(TelegramMethod[bool]):
     data: str | None = None
 
 
+_REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^") | {""}
+# перевод строки не нужен после этих символов (выражение продолжается) и перед вторыми:
+# автоподстановка «;» там невозможна. После «}» и «)» он нужен — там может кончаться оператор
+_NO_NL_AFTER = set("{([,;=:?&|+-*%<>!~^")
+_NO_NL_BEFORE = set(")]},;.?:")
+
+
+def _is_word(ch: str) -> bool:
+    return bool(ch) and (ch.isalnum() or ch in "_$" or ord(ch) > 127)
+
+
+def minify_js(src: str) -> str:
+    """Убрать из JS комментарии и лишние пробелы, не трогая строки, шаблоны и регулярки.
+
+    Переводы строк остаются (по одному): код виджета полагается на автоподстановку «;».
+    Пробел остаётся только между двумя символами слов и в «+ +» / «- -».
+    """
+    out: list[str] = []
+    stack: list[int] = []  # глубина фигурных скобок внутри каждого открытого ${…} шаблона
+    gap = ""               # пропущенные пробелы: "", " " или "\n"
+    i, n = 0, len(src)
+
+    def last() -> str:
+        return out[-1][-1] if out else ""
+
+    def put(tok: str) -> None:
+        nonlocal gap
+        tail = out[-1][-2:] if out else ""
+        # «n--» / «i++» в конце строки — конец оператора, перевод строки нужен
+        if gap == "\n" and out and tok[0] not in _NO_NL_BEFORE and (
+                last() not in _NO_NL_AFTER or tail in ("++", "--")):
+            out.append("\n")
+        elif gap and ((_is_word(last()) and _is_word(tok[0])) or (last() and last() in "+-" and tok[0] == last())):
+            out.append(" ")
+        gap = ""
+        out.append(tok)
+
+    def template(start: int) -> int:
+        """Скопировать шаблонную строку с позиции после «`» до «`» или «${». Вернуть позицию после."""
+        j = start
+        while j < n:
+            if src[j] == "\\":
+                j += 2
+            elif src[j] == "`":
+                out.append(src[start:j + 1])
+                return j + 1
+            elif src.startswith("${", j):
+                out.append(src[start:j + 2])
+                stack.append(0)
+                return j + 2
+            else:
+                j += 1
+        raise ValueError("unterminated template literal")
+
+    while i < n:
+        ch = src[i]
+        if ch in " \t\r\n":
+            if ch == "\n" or (gap == "\n"):
+                gap = "\n"
+            elif not gap:
+                gap = " "
+            i += 1
+        elif src.startswith("//", i):
+            i = src.find("\n", i)
+            i = n if i < 0 else i
+        elif src.startswith("/*", i):
+            i = src.index("*/", i) + 2
+            gap = gap or " "
+        elif ch in "'\"":
+            j = i + 1
+            while src[j] != ch:
+                j += 2 if src[j] == "\\" else 1
+            put(src[i:j + 1])
+            i = j + 1
+        elif ch == "`":
+            put("`")
+            i = template(i + 1)
+        elif ch == "/" and (last() in _REGEX_BEFORE or "".join(out).endswith(("return", "typeof"))):
+            j, in_class = i + 1, False
+            while in_class or src[j] != "/":
+                if src[j] == "\\":
+                    j += 1
+                elif src[j] == "[":
+                    in_class = True
+                elif src[j] == "]":
+                    in_class = False
+                j += 1
+            j += 1
+            while j < n and src[j].isalpha():  # флаги
+                j += 1
+            put(src[i:j])
+            i = j
+        elif ch == "{" and stack:
+            stack[-1] += 1
+            put(ch)
+            i += 1
+        elif ch == "}" and stack:
+            if stack[-1] == 0:  # конец ${…} — дальше снова текст шаблона
+                stack.pop()
+                put("}")
+                i = template(i + 1)
+            else:
+                stack[-1] -= 1
+                put(ch)
+                i += 1
+        else:
+            put(ch)
+            i += 1
+    return "".join(out)
+
+
 def _load_html() -> str:
     html = Path(__file__).with_name("widget.html").read_text(encoding="utf-8")
     html = re.sub(r"<!--.*?-->", "", html, flags=re.S)
-    # комментарии в CSS тоже уходят в Telegram и съедают лимит 4 КБ — вырезаем только в <style>
-    html = re.sub(r"<style>.*?</style>", lambda m: re.sub(r"/\*.*?\*/", "", m.group(0), flags=re.S),
+    # комментарии и переводы строк в CSS тоже уходят в Telegram и съедают лимит 4 КБ
+    html = re.sub(r"<style>.*?</style>", lambda m: re.sub(r"\n+", "", re.sub(r"/\*.*?\*/", "", m.group(0), flags=re.S)),
                   html, count=1, flags=re.S)
-    # и в <script>: строки-комментарии и отступы (комментарии в конце строки остаются — там бывают строки с //)
-    html = re.sub(r"<script>.*?</script>", lambda m: "\n".join(
-        line.strip() for line in m.group(0).splitlines()
-        if line.strip() and not line.strip().startswith("//")), html, count=1, flags=re.S)
+    html = re.sub(r"(?<=<script>)(.*?)(?=</script>)", lambda m: minify_js(m.group(1)), html, count=1, flags=re.S)
     return html.strip()
 
 
@@ -139,104 +248,116 @@ async def _answer(query_id: str, error: str | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Список форматов для виджета
+# Матрица форматов для виджета: строки — качество, столбцы — кодеки, плюс звук
 # ---------------------------------------------------------------------------
 
+MAX_ROWS = 8    # с быстрыми кнопками, звуком и SponsorBlock — в пределах 600 px высоты виджета
+MAX_COLS = 3
+MAX_AUDIO = 2   # ячейки звука в одну строку под матрицей; остальное — в «Все форматы»
 
 
-
-
-def _video_rank(f: dict) -> tuple:
-    # Внутри одного качества: известный размер (не HLS), затем H.264 — Telegram
-    # проигрывает его прямо в чате на всех клиентах, VP9/AV1 в MP4 — не везде.
+def _cell_rank(f: dict, separate_audio: bool) -> tuple:
+    # В ячейке — лучший из форматов этого качества и кодека: при отдельном звуке —
+    # видео без звука (звук выберут сами), затем известный размер, не HLS, битрейт
     return (
+        not (separate_audio and fulltable._muxed(f)),
         fmt_bytes(f) > 0,
         not str(f.get("protocol") or "").startswith("m3u8"),
-        str(f.get("vcodec") or "").startswith("avc1"),
         f.get("tbr") or 0,
     )
 
 
-def _audio_options(groups: dict[str, list[dict]]) -> list[tuple[str, str, str, str]]:
-    fmts = [f for f in groups.get("audio_only", []) if "drc" not in str(f["format_id"]).lower()]
-    if not fmts:
-        fmts = groups.get("audio_only", [])
-    # дубляжи и автоперевод — только через «Все форматы», здесь язык оригинала
-    top_lang = max((f.get("language_preference") or -1 for f in fmts), default=-1)
-    out, seen = [], set()
-    for f in sorted(fmts, key=lambda f: f.get("abr") or f.get("tbr") or 0, reverse=True):
-        if (f.get("language_preference") or -1) != top_lang:
-            continue
-        abr = f.get("abr") or f.get("tbr")
-        key = (f.get("ext"), round(abr or 0))
-        if key in seen:
-            continue
-        seen.add(key)
-        q = f"{round(abr)} kbps" if abr else (f.get("format_note") or str(f["format_id"]))
-        out.append((f["format_id"], "audio_only", q,
-                    f"{(f.get('ext') or '?').upper()} · {format_filesize(fmt_bytes(f))}"))
-        if len(out) >= MAX_AUDIO_ROWS:
-            break
-    return out
+def _mb(f: dict) -> float:
+    size = fmt_bytes(f) / 2 ** 20
+    return round(size, 1) if size < 10 else round(size)
 
 
-def build_options(groups: dict[str, list[dict]]) -> dict[str, list[tuple[str, str, str, str]]]:
-    """Сжатый список для виджета: по одному формату на качество.
+def build_matrix(s: dict) -> dict | None:
+    """Разложить форматы сессии для виджета. None — показывать нечего."""
+    video, audio = fulltable.split_formats(s.get("raw_formats") or [])
 
-    Возвращает {"v": [...], "a": [...]} из кортежей
-    (format_id, категория, качество, детали).
-    """
-    candidates = [(f, cat) for cat in ("video_audio", "video_only") for f in groups.get(cat, [])]
-    # без высоты при наличии других — это HLS-аудио, ошибочно похожее на видео (ext mp4, кодеков нет)
-    if any(f.get("height") for f, _ in candidates):
-        candidates = [(f, cat) for f, cat in candidates if f.get("height")]
+    # звук: язык оригинала, без DRC, по одному на кодек и битрейт, сначала с известным размером.
+    # AAC — первым: виджет подставляет первый звук к выбранному видео, а AAC в MP4 Telegram
+    # проигрывает везде (как H.264 — первый столбец матрицы)
+    top = max((f.get("language_preference") or -1 for f in audio), default=-1)
+    candidates = sorted(
+        (f for f in audio
+         if (f.get("language_preference") or -1) == top and "drc" not in str(f["format_id"]).lower()),
+        key=lambda f: (not str(f.get("acodec") or "").startswith("mp4a"),
+                       -(f.get("abr") or f.get("tbr") or 0), fmt_bytes(f) == 0),
+    ) or audio
+    sound, seen = [], set()
+    for f in candidates:  # лучший по битрейту из каждого семейства: AAC, Opus…
+        family = fulltable._audio_kind(f).split()[0]
+        if family not in seen:
+            seen.add(family)
+            sound.append(f)
+    sound = sound[:MAX_AUDIO]
 
-    best: dict[str, tuple[dict, str]] = {}
-    for f, cat in candidates:
-        q = video_quality(f)
-        if q not in best or _video_rank(f) > _video_rank(best[q][0]):
-            best[q] = (f, cat)
-    video = sorted(
-        best.items(),
-        key=lambda kv: (kv[1][0].get("height") or 0, kv[1][0].get("fps") or 0),
-        reverse=True,
-    )[:MAX_VIDEO_ROWS]
+    rows: dict[str, dict[str, int]] = {}  # качество -> кодек -> индекс в video (порядок — от лучшего)
+    for i, f in enumerate(video):
+        cell = rows.setdefault(video_quality(f), {})
+        codec = codec_name(f)
+        if codec not in cell or _cell_rank(f, bool(sound)) > _cell_rank(video[cell[codec]], bool(sound)):
+            cell[codec] = i
+    quals = list(rows)[:MAX_ROWS]
+    usage = Counter(c for q in quals for c in rows[q])
+    keep = {c for c, _ in usage.most_common(MAX_COLS)}
+    # столбцы — от самого совместимого кодека: «Лучшее/Среднее/Минимум» берут первый столбец с форматом
+    codecs = sorted(keep, key=lambda c: (CODEC_ORDER.index(c) if c in CODEC_ORDER else len(CODEC_ORDER), -usage[c]))
+    quals = [q for q in quals if any(c in rows[q] for c in codecs)]
+    if not quals and not sound:
+        return None
+    return {
+        "video": video, "audio": sound, "quals": quals, "codecs": codecs,
+        "grid": [[rows[q].get(c) for c in codecs] for q in quals],
+    }
 
-    audio = _audio_options(groups)
-    audio_bytes = max((fmt_bytes(f) for f in groups.get("audio_only", [])), default=0)
 
-    rows = []
-    for q, (f, cat) in video:
-        ext = "MP4" if cat == "video_only" else (f.get("ext") or "?").upper()
-        codec = str(f.get("vcodec") or "").split(".")[0]
-        parts = [ext]
-        if codec and not codec.startswith(("avc1", "none")):
-            parts.append({"vp09": "VP9", "vp9": "VP9", "av01": "AV1"}.get(codec, codec.upper()))
-        size = fmt_bytes(f)
-        if cat == "video_only" and size and audio_bytes:
-            # к видео без звука при скачивании приклеится лучшая аудиодорожка
-            parts.append(f"≈{format_filesize(size + audio_bytes)}")
-        else:
-            parts.append(format_filesize(size))
-        rows.append((f["format_id"], cat, q, " · ".join(parts)))
-
-    return {"v": rows, "a": audio}
+def _cell_value(f: dict) -> float | list:
+    # размер в МБ (0 — неизвестен); [МБ, 1] — звук уже внутри
+    return [_mb(f), 1] if fulltable._muxed(f) else _mb(f)
 
 
 def pick_state(s: dict) -> dict:
-    opts = s["wopts"]
+    m = s["wm"]
     state = {
         "s": "pick",
-        "v": [[q, m] for _, _, q, m in opts["v"]],
-        "a": [[q, m] for _, _, q, m in opts["a"]],
+        "c": m["codecs"],
+        "r": [[q, [None if i is None else _cell_value(m["video"][i]) for i in row]]
+              for q, row in zip(m["quals"], m["grid"])],
+        "a": [[fulltable._audio_kind(f), _mb(f)] for f in m["audio"]],
         "y": int(is_youtube(s["url"])),
     }
-    # chat_data — максимум 1024 байта: урезаем длинный список с конца
-    while len(_dump(state).encode()) > MAX_DATA_BYTES:
-        longest = "v" if len(state["v"]) >= len(state["a"]) else "a"
-        state[longest].pop()
-        opts[longest].pop()
+    # chat_data — максимум 1024 байта: урезаем матрицу снизу (индексы строк в запросах не сдвигаются)
+    while len(_dump(state).encode()) > MAX_DATA_BYTES and state["r"]:
+        state["r"].pop()
     return state
+
+
+def selection(s: dict, vkey: str, akey: str) -> tuple[str, str, str] | None:
+    """Ключи из запроса виджета («строка.столбец», номер звука) -> (селектор, как отправить, подпись).
+
+    ValueError / IndexError — ключ не из этой матрицы.
+    """
+    m = s["wm"]
+    v = a = None
+    if vkey:
+        r, c = (int(x) for x in vkey.split("."))
+        if r < 0 or c < 0 or m["grid"][r][c] is None:
+            raise IndexError(vkey)
+        v = m["video"][m["grid"][r][c]]
+    if akey:
+        if int(akey) < 0:
+            raise IndexError(akey)
+        a = m["audio"][int(akey)]
+    muxed = bool(v and fulltable._muxed(v))
+    if muxed:
+        a = None  # звук уже внутри
+    return pair_selector(
+        str(v["format_id"]) if v else None, f"{video_quality(v)} {codec_name(v)}" if v else "", muxed,
+        str(a["format_id"]) if a else None, fulltable._audio_kind(a) if a else "",
+    )
 
 
 def session_caption(s: dict) -> str:
@@ -253,9 +374,10 @@ async def send_picker(chat_id: int, sid: str, s: dict) -> bool:
     global available
     if not (available and USE_WIDGETS):
         return False
-    s["wopts"] = build_options(s["groups"])
-    if not s["wopts"]["v"] and not s["wopts"]["a"]:
+    matrix = build_matrix(s)
+    if matrix is None:
         return False
+    s["wm"] = matrix
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="📋 Все форматы", callback_data=RawFormatsCallback(session=sid).pack()),
@@ -450,21 +572,23 @@ async def handle_query(q: dict) -> None:
 
     cmd, _, arg = data.partition(":")
 
-    if cmd in ("d", "r"):
+    if cmd in ("g", "r"):
         if s.get("job"):
             await _answer(query_id, "Уже скачиваю")
             return
-        if cmd == "d":
-            key, _, sb_flag = arg.partition(":")
-            tab, idx = key[:1], key[1:]
-            opts = s.get("wopts", {}).get(tab) or []
-            if not idx.isdigit() or int(idx) >= len(opts):
+        if cmd == "g":
+            vkey, akey, sb_flag = (arg.split(":") + ["", ""])[:3]
+            try:
+                chosen = selection(s, vkey, akey) if "wm" in s else None
+            except (ValueError, IndexError):
+                chosen = None
+            if not chosen:
                 await _answer(query_id, "Формат не найден — отправь ссылку заново")
                 return
-            fmt_id, _, quality, details = opts[int(idx)]
+            selector, send_as, label = chosen
             s["wsel"] = {
-                "fmt": fmt_id, "label": f"{quality} · {details.split(' · ')[0]}", "sb": sb_flag == "1",
-                "category": None, "send_as": None, "standalone": False,
+                "fmt": selector, "label": label, "sb": sb_flag == "1",
+                "category": "pair", "send_as": send_as, "standalone": False,
             }
         elif not s.get("wsel"):
             await _answer(query_id, "Сначала выбери формат")
@@ -482,7 +606,7 @@ async def handle_query(q: dict) -> None:
             cancel.set()  # хук прогресса yt-dlp прервёт скачивание
 
     elif cmd == "b":
-        if "wopts" not in s:  # виджет только с прогрессом — выбора формата в нём нет
+        if "wm" not in s:  # виджет только с прогрессом — выбора формата в нём нет
             await _answer(query_id, "Выбери формат кнопками в сообщении выше")
             return
         if s.get("job"):

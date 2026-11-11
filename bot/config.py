@@ -29,9 +29,9 @@ PANEL_URL = os.environ.get("PANEL_URL", "http://host.docker.internal:1080").rstr
 OWNER_ID = int(os.environ.get("OWNER_ID") or 0)
 PANEL_TOKEN = os.environ.get("PANEL_TOKEN", "")
 
-# HTML-виджет выбора формата (Bot API 10.4) вместо классических кнопок на первом экране.
-# По умолчанию выключен: первый экран — кнопки «Лучшее / Среднее / Низкое» и список форматов.
-USE_WIDGETS = os.environ.get("USE_WIDGETS", "0") == "1"
+# HTML-виджет выбора формата (Bot API 10.4) вместо классических кнопок на первом экране:
+# матрица «качество × кодек» и звук. USE_WIDGETS=0 — кнопки «Лучшее / Среднее / Низкое» и список форматов.
+USE_WIDGETS = os.environ.get("USE_WIDGETS", "1") != "0"
 # Прогресс скачивания виджетом (плавная полоска, «Отменить») вместо текстового сообщения.
 # WIDGET_PROGRESS=0 — прогресс текстом. Без Bot API 10.4 — текстом автоматически.
 WIDGET_PROGRESS = os.environ.get("WIDGET_PROGRESS", "1") != "0"
