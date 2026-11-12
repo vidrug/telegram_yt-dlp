@@ -32,7 +32,7 @@ from aiogram.methods.base import TelegramMethod
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 
 from bot.callbacks import ClassicCallback, RawFormatsCallback
-from bot.config import MAX_CONCURRENT_PER_USER, USE_WIDGETS, WIDGET_PROGRESS, log
+from bot.config import MAX_CONCURRENT_PER_USER, SHARED_DIR, USE_WIDGETS, WIDGET_PROGRESS, log
 from bot.cookies import is_youtube
 from bot.downloader import progress_info, progress_track
 from bot import fulltable
@@ -41,6 +41,79 @@ from bot.jobs import SerialUI, cookie_prompt, run_download
 from bot.state import bot, dp, sessions, user_downloads, widget_sessions
 
 MAX_DATA_BYTES = 1024  # chat_data и ответ на запрос
+
+
+# ---------------------------------------------------------------------------
+# Учёт отправленных виджетов: мёртвые бот удаляет сам
+# ---------------------------------------------------------------------------
+# Кнопки виджета работают, пока жива его сессия. Сессии живут в памяти (2 часа, с .part-файлами 8),
+# поэтому виджет кончившейся сессии и все виджеты прошлого запуска — мёртвые: висят в чате и не
+# нажимаются. Список виджетов лежит и на диске, чтобы после перезапуска найти и удалить их.
+
+WIDGETS_FILE = SHARED_DIR / "widgets.json"
+SWEEP_INTERVAL = 300
+
+
+def _save_widgets() -> None:
+    try:
+        WIDGETS_FILE.write_text(json.dumps([list(k) for k in widget_sessions]))
+    except OSError as e:
+        log.warning("cannot save the widget list: %s", e)
+
+
+def track(chat_id: int, message_id: int, sid: str) -> None:
+    """Запомнить отправленный виджет сессии sid."""
+    widget_sessions[(chat_id, message_id)] = sid
+    _save_widgets()
+
+
+def untrack(chat_id: int, message_id: int) -> None:
+    if widget_sessions.pop((chat_id, message_id), None) is not None:
+        _save_widgets()
+
+
+async def _delete_widgets(keys: list[tuple[int, int]]) -> None:
+    by_chat: dict[int, list[int]] = {}
+    for chat_id, message_id in keys:
+        by_chat.setdefault(chat_id, []).append(message_id)
+    for chat_id, ids in by_chat.items():
+        for i in range(0, len(ids), 100):  # deleteMessages берёт до 100 сообщений
+            try:
+                await bot.delete_messages(chat_id, ids[i:i + 100])
+            except TelegramAPIError as e:
+                log.warning("widget delete failed in chat %s: %s", chat_id, e)
+
+
+async def purge_previous_run() -> None:
+    """При старте удалить виджеты прошлого запуска: их сессий больше нет."""
+    try:
+        keys = [(int(c), int(m)) for c, m in json.loads(WIDGETS_FILE.read_text())]
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError, TypeError) as e:
+        log.warning("cannot read the widget list: %s", e)
+        keys = []
+    if keys:
+        await _delete_widgets(keys)
+        log.info("Removed %d widgets of the previous run", len(keys))
+    _save_widgets()
+
+
+async def sweep_widgets() -> None:
+    """Каждые 5 минут удалять виджеты, чья сессия кончилась (истекла, отменена, файл ушёл ссылкой)."""
+    while True:
+        await asyncio.sleep(SWEEP_INTERVAL)
+        try:
+            dead = [k for k, sid in widget_sessions.items() if sid not in sessions]
+            if not dead:
+                continue
+            for k in dead:
+                widget_sessions.pop(k, None)
+            _save_widgets()
+            await _delete_widgets(dead)
+            log.info("Removed %d widgets of finished sessions", len(dead))
+        except Exception as e:
+            log.error("widget sweep error: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +521,7 @@ async def send_full(chat_id: int, sid: str, s: dict) -> bool:
     except TelegramAPIError as e:
         log.warning("full formats widget failed, falling back to the rich table: %s", e)
         return False
-    widget_sessions[(chat_id, msg.message_id)] = sid
+    track(chat_id, msg.message_id, sid)
     return True
 
 
@@ -491,7 +564,7 @@ async def send_picker(chat_id: int, sid: str, s: dict) -> bool:
             available = False
         return False
 
-    widget_sessions[(chat_id, msg.message_id)] = sid
+    track(chat_id, msg.message_id, sid)
     return True
 
 
@@ -553,7 +626,7 @@ class WidgetUI(SerialUI):
             return
 
         async def remove() -> None:
-            widget_sessions.pop((self.chat_id, self.message_id), None)
+            untrack(self.chat_id, self.message_id)
             try:
                 await bot.delete_message(self.chat_id, self.message_id)
             except TelegramAPIError as e:
@@ -607,7 +680,7 @@ async def start_progress(
     except TelegramAPIError as e:
         log.warning("progress widget failed, falling back to text: %s", e)
         return False
-    widget_sessions[(chat_id, msg.message_id)] = sid
+    track(chat_id, msg.message_id, sid)
     s.setdefault("wsel", {})[msg.message_id] = {
         "fmt": fmt_id, "label": label, "sb": sponsorblock,
         "category": category, "send_as": send_as, "standalone": True,
@@ -655,7 +728,7 @@ async def handle_query(q: dict) -> None:
     sid = widget_sessions.get((chat_id, message_id))
     s = sessions.get(sid) if sid else None
     if s is None:
-        widget_sessions.pop((chat_id, message_id), None)
+        # виджет остаётся в учёте: sweep_widgets его удалит, а пока он скажет, что сессия истекла
         await _answer(query_id, "Сессия истекла — отправь ссылку заново")
         if chat_id and message_id:
             await set_state(chat_id, message_id, {"s": "job", "t": "⏰ Сессия истекла — отправь ссылку заново"})

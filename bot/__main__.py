@@ -37,6 +37,8 @@ async def on_startup() -> None:
     await bot.delete_webhook(drop_pending_updates=True)
     await status.register_owner_commands()
     await widget.probe()
+    await widget.purge_previous_run()
+    asyncio.create_task(widget.sweep_widgets())
     asyncio.create_task(periodic_cleanup())
     asyncio.create_task(session_cleanup())
     asyncio.create_task(periodic_ytdlp_update())
