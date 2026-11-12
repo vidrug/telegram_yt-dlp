@@ -1,20 +1,23 @@
-"""HTML-виджет (Bot API 10.4): выбор формата и живой прогресс прямо в сообщении.
+"""HTML-виджеты (Bot API 10.4): выбор формата, «Все форматы» и живой прогресс скачивания.
 
 aiogram 3.31 знает только Bot API 10.3, поэтому методы виджетов описаны здесь
 вручную, а апдейты widget_query перехватываются outer-middleware до диспетчера
 (иначе он отбрасывает их как неизвестный тип).
 
-HTML отправленного виджета изменить нельзя, поэтому bot/widget.html — тонкий
-рендерер, а все тексты, статусы и кнопки задаются здесь, в chat_data:
-  {"s": "pick", "c": [кодеки], "r": [[качество, [ячейка по кодекам]], ...],
-   "a": [[звук, МБ], ...], "y": 1}                                    — выбор формата
-  {"s": "job", "l": что качаем, "t": статус, "k": "e"|"ok", "p": % (-1 — бегущая
-   полоска), "w": "v"|"a", "d": детали, "b": [[текст, запрос], ...]}  — ход скачивания
-Запросы виджета: g:<строка.столбец>:<звук>:<sb> — скачать (любой из двух ключей может
-быть пустым), r — повторить, x — отменить, b — вернуться к выбору формата.
-«📋 Все форматы» — отдельный виджет (bot/widget_full.html, состояние — full_state):
-p:<v|a>:<страница> — строки страницы в ответе, f:<видео>:<звук>:<sb> — скачать
-(прогресс — новым виджетом, как из нативной таблицы).
+HTML отправленного виджета изменить нельзя, поэтому виджеты — тонкие рендереры,
+а все тексты, статусы и кнопки задаются здесь, в chat_data. Три виджета:
+  bot/widget.html — первый экран, выбор формата:
+    {"s": "pick", "c": [кодеки], "r": [[качество, [ячейка по кодекам]], ...],
+     "a": [[звук, МБ], ...], "y": 1}
+    запрос g:<строка.столбец>:<звук>:<sb> — скачать (любой из двух ключей может быть пустым);
+  bot/widget_full.html — «📋 Все форматы» (состояние — full_state): p:<v|a>:<страница> —
+    строки страницы в ответе, f:<видео>:<звук>:<sb> — скачать;
+  bot/widget_job.html — ход скачивания, отдельным сообщением под выбором (выбор остаётся
+    для другого формата), после отправки файла бот его удаляет:
+    {"s": "job", "l": что качаем, "t": статус, "k": "e"|"ok", "p": % (-1 — этап без
+     процента), "w": "v"|"a", "d": детали, "b": [[текст, запрос], ...]}
+    запросы r — повторить, x — отменить.
+Истёкшая сессия любому виджету присылает {"s": "job", "t": "СЕССИЯ ИСТЕКЛА — …"}.
 """
 
 import asyncio
@@ -271,8 +274,9 @@ def _load_html(name: str) -> str:
     return html.strip()
 
 
-WIDGET_HTML = _load_html("widget.html")      # первый экран и ход скачивания
+WIDGET_HTML = _load_html("widget.html")      # первый экран: выбор формата
 FULL_HTML = _load_html("widget_full.html")   # «📋 Все форматы»
+JOB_HTML = _load_html("widget_job.html")     # ход скачивания
 
 # Включаются после probe(), если локальный Bot API сервер знает методы 10.4
 available = False
@@ -284,7 +288,7 @@ async def probe() -> bool:
     available = False
     if not (USE_WIDGETS or WIDGET_PROGRESS):
         return False
-    for name, html in (("widget.html", WIDGET_HTML), ("widget_full.html", FULL_HTML)):
+    for name, html in (("widget.html", WIDGET_HTML), ("widget_full.html", FULL_HTML), ("widget_job.html", JOB_HTML)):
         compressed = len(zlib.compress(html.encode(), 9))
         if compressed > 4096:
             log.error("%s is %d bytes compressed (limit 4096), widgets disabled", name, compressed)
@@ -535,9 +539,12 @@ def session_caption(s: dict) -> str:
 
 
 async def send_picker(chat_id: int, sid: str, s: dict) -> bool:
-    """Отправить виджет выбора формата. False — откатиться на классические кнопки."""
+    """Отправить виджет выбора формата. False — откатиться на классические кнопки.
+
+    Скачивание отсюда показывает прогресс отдельным виджетом, поэтому нужен и WIDGET_PROGRESS.
+    """
     global available
-    if not (available and USE_WIDGETS):
+    if not (available and USE_WIDGETS and WIDGET_PROGRESS):
         return False
     matrix = build_matrix(s)
     if matrix is None:
@@ -573,21 +580,18 @@ async def send_picker(chat_id: int, sid: str, s: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 class WidgetUI(SerialUI):
-    """Ход скачивания в виджете.
+    """Ход скачивания в отдельном виджете (bot/widget_job.html).
 
-    standalone — виджет только для прогресса (формат выбран кнопками или в «Все
-    форматы»): «Другого формата» в нём нет, а после отправки файла он удаляется,
-    как раньше удалялось текстовое сообщение о прогрессе.
+    Формат выбирают в сообщении выше — в первом экране, в «Все форматы» или кнопками, —
+    там же можно выбрать другой. После отправки файла виджет удаляется, как раньше
+    удалялось текстовое сообщение о прогрессе.
     """
 
-    def __init__(self, chat_id: int, message_id: int, label: str, sponsorblock: bool,
-                 standalone: bool = False) -> None:
+    def __init__(self, chat_id: int, message_id: int, label: str, sponsorblock: bool) -> None:
         super().__init__()
         self.chat_id = chat_id
         self.message_id = message_id
         self.label = label + (" · ✂️ без рекламы" if sponsorblock else "")
-        self.standalone = standalone
-        self.back = () if standalone else (("Другой формат", "b"),)
 
     def _job(self, t: str, p: float | None = None, d: str | None = None,
              b: tuple[tuple[str, str], ...] = (), k: str | None = None,
@@ -621,10 +625,6 @@ class WidgetUI(SerialUI):
         await self._step(self._job("📤 Отправляю в Telegram…", -1))
 
     async def delivered(self) -> None:
-        if not self.standalone:
-            await self._step(self._job("✅ Готово — файл ниже", k="ok", b=self.back))
-            return
-
         async def remove() -> None:
             untrack(self.chat_id, self.message_id)
             try:
@@ -644,7 +644,7 @@ class WidgetUI(SerialUI):
         )
 
     async def missing_file(self) -> None:
-        await self._step(self._job("❌ Файл не найден после скачивания", k="e", b=(("Повторить", "r"),) + self.back))
+        await self._step(self._job("❌ Файл не найден после скачивания", k="e", b=(("Повторить", "r"),)))
 
     async def failed(self, error: Exception, resumable: bool) -> None:
         text = str(error).removeprefix("ERROR: ")[:160]
@@ -652,15 +652,15 @@ class WidgetUI(SerialUI):
             text += " — частичный файл сохранён, «Повторить» докачает с места остановки"
         await self._step(self._job(
             "❌ Ошибка скачивания", k="e", d=text,
-            b=(("Повторить", "r"),) + self.back,
+            b=(("Повторить", "r"),),
         ))
 
     async def need_cookies(self, url: str, user_id: int) -> None:
-        await self._step(self._job("🍪 YouTube требует вход — инструкция ниже", k="e", b=self.back))
+        await self._step(self._job("🍪 YouTube требует вход — инструкция ниже", k="e"))
         await bot.send_message(self.chat_id, cookie_prompt(user_id, url), disable_web_page_preview=True)
 
     async def cancelled(self) -> None:
-        await self._step(self._job("⏹ Скачивание отменено", b=(("Скачать заново", "r"),) + self.back))
+        await self._step(self._job("⏹ Скачивание отменено", b=(("Скачать заново", "r"),)))
 
 
 async def start_progress(
@@ -674,7 +674,7 @@ async def start_progress(
              "t": _status("⏳ Подготовка…"), "p": -1, "b": [["Отменить", "x"]]}
     try:
         msg = await bot(SendWidget(
-            chat_id=chat_id, html=WIDGET_HTML, chat_data=_dump(first),
+            chat_id=chat_id, html=JOB_HTML, chat_data=_dump(first),
             caption=session_caption(s), parse_mode="HTML", allow_queries=True,
         ))
     except TelegramAPIError as e:
@@ -683,7 +683,7 @@ async def start_progress(
     track(chat_id, msg.message_id, sid)
     s.setdefault("wsel", {})[msg.message_id] = {
         "fmt": fmt_id, "label": label, "sb": sponsorblock,
-        "category": category, "send_as": send_as, "standalone": True,
+        "category": category, "send_as": send_as,
     }
     _start_job(chat_id, msg.message_id, sid, s, user_id)
     return True
@@ -700,7 +700,7 @@ def _start_job(chat_id: int, message_id: int, sid: str, s: dict, user_id: int) -
     sel = s["wsel"][message_id]
     cancel = threading.Event()
     s["job"] = cancel
-    ui = WidgetUI(chat_id, message_id, sel["label"], sel["sb"], standalone=sel["standalone"])
+    ui = WidgetUI(chat_id, message_id, sel["label"], sel["sb"])
 
     async def runner() -> None:
         try:
@@ -739,25 +739,15 @@ async def handle_query(q: dict) -> None:
 
     cmd, _, arg = data.partition(":")
 
-    if cmd in ("g", "r"):
+    if cmd == "g":
+        await _pick_download(query_id, s, sid, arg, chat_id=chat_id, user_id=user_id)
+
+    elif cmd == "r":
+        # «Повторить» в виджете хода скачивания: тот же формат, тот же виджет
         if s.get("job"):
             await _answer(query_id, "Уже скачиваю")
             return
-        if cmd == "g":
-            vkey, akey, sb_flag = (arg.split(":") + ["", ""])[:3]
-            try:
-                chosen = selection(s, vkey, akey) if "wm" in s else None
-            except (ValueError, IndexError):
-                chosen = None
-            if not chosen:
-                await _answer(query_id, "Формат не найден — отправь ссылку заново")
-                return
-            selector, send_as, label = chosen
-            s.setdefault("wsel", {})[message_id] = {
-                "fmt": selector, "label": label, "sb": sb_flag == "1",
-                "category": "pair", "send_as": send_as, "standalone": False,
-            }
-        elif message_id not in s.get("wsel", {}):
+        if message_id not in s.get("wsel", {}):
             await _answer(query_id, "Сначала выбери формат")
             return
         if user_downloads.get(user_id, 0) >= MAX_CONCURRENT_PER_USER:
@@ -785,18 +775,32 @@ async def handle_query(q: dict) -> None:
         if cancel is not None:
             cancel.set()  # хук прогресса yt-dlp прервёт скачивание
 
-    elif cmd == "b":
-        if "wm" not in s:  # виджет только с прогрессом — выбора формата в нём нет
-            await _answer(query_id, "Выбери формат кнопками в сообщении выше")
-            return
-        if s.get("job"):
-            await _answer(query_id, "Дождись окончания или отмени скачивание")
-            return
-        await _answer(query_id)
-        await set_state(chat_id, message_id, pick_state(s))
-
     else:
         await _answer(query_id, "Неизвестная команда")
+
+
+async def _pick_download(query_id: str, s: dict, sid: str, arg: str, *, chat_id: int, user_id: int) -> None:
+    """«Скачать» в первом экране: g:<строка.столбец>:<звук>:<sb> — прогресс отдельным виджетом под выбором."""
+    if s.get("job"):
+        await _answer(query_id, "Уже скачиваю — дождись или отмени")
+        return
+    vkey, akey, sb_flag = (arg.split(":") + ["", ""])[:3]
+    try:
+        chosen = selection(s, vkey, akey) if "wm" in s else None
+    except (ValueError, IndexError):
+        chosen = None
+    if not chosen:
+        await _answer(query_id, "Формат не найден — отправь ссылку заново")
+        return
+    if user_downloads.get(user_id, 0) >= MAX_CONCURRENT_PER_USER:
+        await _answer(query_id, f"Не больше {MAX_CONCURRENT_PER_USER} скачиваний сразу — подожди")
+        return
+    selector, send_as, label = chosen
+    if await start_progress(chat_id, sid, s, user_id, fmt_id=selector, label=label,
+                            sponsorblock=sb_flag == "1", category="pair", send_as=send_as):
+        await _answer(query_id)
+    else:
+        await _answer(query_id, "Не получилось начать — попробуй ещё раз")
 
 
 async def _full_download(query_id: str, s: dict, sid: str, arg: str, *, chat_id: int, user_id: int) -> None:

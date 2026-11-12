@@ -1,0 +1,163 @@
+<!--
+  Виджет хода скачивания (Bot API 10.4) — отдельное сообщение под выбором формата.
+  Бот присылает его после «Скачать» в первом экране, в «Все форматы» и при выборе кнопками,
+  и удаляет после отправки файла. HTML отправленного виджета изменить нельзя, поэтому он —
+  тонкий рендерер: тексты, этапы и кнопки присылает бот в chat_data (см. WidgetUI в bot/widget.py):
+    {"s": "job", "l": что качаем, "t": статус (заглавными, без эмодзи), "k": "e"|"ok",
+     "p": % (-1 — этап без процента), "w": "v"|"a", "d": детали, "b": [[текст, запрос], ...]}
+  Лимит: 4096 байт после zlib -9; комментарии и отступы бот вырезает перед отправкой (_load_html).
+  Оформление — как у панели /panel: формы интерфейса Cyberpunk 2077, палитра из UI-гайда игры.
+-->
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 system-ui;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537}
+/* красное свечение шапки — отдельным слоем, а не фоном body: фон body движок повторяет, если блок выше содержимого */
+#gw{position:absolute;top:0;left:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
+/* строки — position:relative: глитч сдвигает их через left, а кнопки внутри числятся за своей строкой */
+#app,#app>*{position:relative}
+.s0{--y:var(--l)}.s1{--y:#1ded83}.s3{--y:#f75049}
+#tt,.bd,.c b,#jt{letter-spacing:.05em}
+#h{display:flex;align-items:center;gap:8px;padding-bottom:7px;margin-bottom:8px;border-bottom:1px solid var(--l)}
+#hl{flex:1;white-space:nowrap}
+#tt,#pc{font:500 25px/1.1 system-ui}
+#pc{color:var(--c)}
+.bd{display:inline-block;border:1px solid var(--y);color:var(--y);font:600 12px/1 system-ui;padding:3px 5px 3px 6px;white-space:nowrap}
+#sp{position:relative;top:-4px;margin-left:8px}
+/* ячейка: слева «скоба» цвета строки, контур со срезанным нижним правым углом; кнопка — плюс ступенька сверху */
+.c{position:relative;z-index:0;display:flex;align-items:center;gap:8px;min-width:0;padding:0 14px 0 17px;margin-bottom:4px}
+.gr{display:grid;gap:4px;margin:8px 0}
+.gr .c{margin:0;justify-content:center;padding:3px 4px 0 11px}
+.fr{position:absolute;left:0;top:0;width:100%;height:100%;z-index:-1;fill:rgba(247,80,73,.08);stroke:var(--l)}
+.fr .b{fill:var(--r);stroke:none}
+#jc .b{fill:var(--y)}
+.c b{color:var(--c);font:600 13px/1 system-ui}
+.lb{color:var(--c);font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#jl{margin-bottom:8px}
+#jc{min-height:34px;padding:6px 14px 6px 17px}
+#jt{color:var(--w);font-weight:600;font-size:14px}
+.m{color:var(--h);font-size:13px}
+#jd{margin-top:4px}
+.e{color:var(--y)}
+/* полоска: сегменты, как у шкал в игре; по заливке бежит блик. Родной рендерер Telegram не анимирует
+   background-position и не повторяет плитку — движение только transform в CSS-анимации, сегменты — градиент из JS (SEG).
+   Слои с анимацией не мешают тапам: кнопок внутри полоски нет */
+.tk{position:absolute;top:8px;left:15px;width:calc(100% - 31px);height:calc(100% - 16px);overflow:hidden;pointer-events:none}
+#jf{position:relative;width:0;height:100%;overflow:hidden;background:#f75049;transition:width 2.8s linear}
+.sw,.sg,.ib{position:absolute;top:0;left:0;height:100%}
+.sw{width:100%;background:linear-gradient(90deg,rgba(255,255,255,0) 30%,rgba(255,255,255,.5) 50%,rgba(255,255,255,0) 70%);animation:sw 1.6s linear infinite}
+@keyframes sw{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.sg{width:100vw}
+/* этапы без процента: жёлтый блок ездит по тусклой шкале */
+#jr{background:rgba(240,181,55,.12)}
+.ib{width:30%;background:#f0b537;animation:ib 1.4s linear infinite}
+@keyframes ib{from{transform:translateX(-100%)}to{transform:translateX(334%)}}
+/* кадр глитча: строка перекрашивается в циан с жёлтым (как переход вкладок в /panel) */
+.gz{color:#5ef6ff;--r:#5ef6ff;--l:#5ef6ff;--h:#5ef6ff;--c:#f0b537;--w:#f0b537}
+</style>
+<div id="gw"></div>
+<div id="app"></div>
+<script>
+const W = window.TelegramWidget, $ = i => document.getElementById(i), app = $('app');
+// lB, lF, st — что уже нарисовано: кнопки, рамка статуса, этап (для глитча)
+let note = '', busy = 0, Wd = 336, lB, lF, st;
+const N = s => String(s ?? '').replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';').toUpperCase();
+// Данные — разбором JS, а не JSON.parse: в Telegram Desktop JSON.parse читает числа с русской запятой,
+// [7,1] становится [7.1, 1], а 1.4 — 1. Бот присылает чистый JSON, он же — литерал JS
+const J = s => { try { return eval('(' + s + ')') || {} } catch (e) { return {} } }, S = () => J(W.chatData);
+
+// Запрос к боту — строго синхронно в обработчике тапа (правило песочницы)
+function ask(d) {
+  if (busy) return;
+  let p;
+  try { p = W.request(d) } catch (e) { note = e.message; return draw() }
+  busy = 1; note = '⏳'; draw();
+  p.then(a => { note = J(a.result).e || '' },
+    e => { note = e.code == 'RATE_LIMITED' ? 'Подожди пару секунд' : e.code })
+    .finally(() => { busy = 0; draw() });
+}
+
+// Рамки — inline-SVG в точных пикселях, как FR() в панели: clip-path в песочнице запрещён.
+// Только прямые отрезки — разборщик SVG в Telegram самодельный.
+const FR = (w, h, k) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path class="b" d="M0 1h4v' + (h - 2)
+  + 'h-4v-' + (h / 4 - .5) + 'l2-2v-' + (h / 2 - 5) + 'l-2-2z"/><path d="M7.5 1.5' + (k ? 'h' + (w * .3 | 0) + 'l4 4' : '')
+  + 'H' + (w - 1.5) + 'V' + (h - 9.5) + 'l-8 8H7.5z"/></svg>';
+// кнопка: рамка со ступенькой; CW(n) — ширина, когда их n в ряду
+const CW = n => (Wd + 4) / n - 4;
+const BT = (x, n, i) => `<div class="c" style="height:34px" data-k="${i}">${FR(CW(n), 34, 1)}<b>${x}</b></div>`;
+
+// Сегменты шкалы одним градиентом с явными точками: 6 px заливки, 2 px зазора
+const SEG = (() => {
+  const z = 'rgba(14,14,23,0)', d = '#0e0e17', g = [];
+  for (let i = 0; i < 480; i += 8) g.push(`${z} ${i}px`, `${z} ${i + 6}px`, `${d} ${i + 6}px`, `${d} ${i + 8}px`);
+  return `linear-gradient(90deg,${g})`;
+})();
+const show = (id, on) => { $(id).style.display = on ? 'block' : 'none' };
+
+// Глитч при смене этапа, как переход вкладок в /panel: пять кадров по 40 мс, строка может пропасть,
+// сдвинуться и перекраситься. Сдвиг — left, не transform: строку, которой скрипт три кадра подряд
+// меняет transform, Telegram Desktop делает слоем, и тап по кнопке внутри него не находит цель
+function GZ() {
+  let n = 5, r = Math.random;
+  clearInterval(GZ.t);
+  const f = () => {
+    for (let d = app.firstChild; d; d = d.nextSibling) {
+      d.style.visibility = n && r() * 6 < n ? 'hidden' : '';
+      d.style.left = n && r() < .5 ? (r() * 40 - 20 | 0) + 'px' : '';
+      d.classList.toggle('gz', !!n && r() < .5);
+    }
+    n-- || clearInterval(GZ.t);
+  };
+  f(); GZ.t = setInterval(f, 40);
+}
+
+// Разметка создаётся один раз, дальше меняются только тексты, ширина и цвет —
+// так ширина плавно доезжает (transition), а анимации не перезапускаются
+app.innerHTML = '<div id="h"><div id="hl"><span id="tt">ЗАГРУЗКА</span><span class="bd" id="sp"></span></div><span id="pc"></span></div>'
+  + '<div class="lb" id="jl"></div><div class="c" id="jc"><span id="jcf"></span><span id="jt"></span></div>'
+  + '<div class="c" id="jb" style="height:30px"><span id="jbf"></span><div class="tk" id="jr"><span class="ib"></span><span class="sg" id="g1"></span></div>'
+  + '<div class="tk" id="jk"><div id="jf"><span class="sw"></span><span class="sg" id="g2"></span></div></div></div>'
+  + '<div class="m" id="jd"></div><div id="ja"></div><div class="m" id="jn"></div>';
+$('g1').style.backgroundImage = $('g2').style.backgroundImage = SEG;
+
+function draw() {
+  Wd = app.offsetWidth || Wd;
+  const s = S();
+  // k — этап для бейджа и скобы статуса: 0 стоп, 1 готово, 2 в работе, 3 ошибка.
+  // Статус бот присылает заглавными, без эмодзи и «— 45%» (этап — бейджем, процент — в шапке)
+  const p = s.p, k = s.k == 'e' ? 3 : s.k == 'ok' ? 1 : p == null ? 0 : 2, b = JSON.stringify(s.b), t = s.t || '';
+  $('sp').className = 'bd s' + k;
+  $('sp').textContent = ['СТОП', 'ГОТОВО', { v: 'ВИДЕО', a: 'АУДИО' }[s.w] || 'В РАБОТЕ', 'ОШИБКА'][k];
+  $('pc').textContent = p >= 0 ? (p | 0) + '%' : '';
+  $('jl').textContent = s.l || '';
+  $('jt').textContent = t;
+  $('jc').className = 'c s' + k;
+  // рамки — под ширину и высоту (статус бывает в две строки)
+  const f = Wd + 'x' + $('jc').offsetHeight;
+  if (f != lF) { lF = f; $('jcf').innerHTML = FR(Wd, $('jc').offsetHeight || 34, 0); $('jbf').innerHTML = FR(Wd, 30, 0) }
+  show('jb', p != null); show('jr', p < 0); show('jk', p >= 0);
+  // видео красное, звук циановый — как прокси и VPN в панели
+  if (p >= 0) { $('jf').style.width = Math.min(100, p) + '%'; $('jf').style.background = s.w == 'a' ? '#5ef6ff' : '#f75049' }
+  $('jd').textContent = s.d || '';
+  // кнопки пересоздаём только при изменении — не сбивать нажатие
+  if (b != lB) {
+    lB = b;
+    $('ja').innerHTML = s.b ? `<div class="gr" style="grid-template-columns:${'1fr '.repeat(s.b.length)}">`
+      + s.b.map((x, i) => BT(N(x[0]), s.b.length, 'b' + i)).join('') + '</div>' : '';
+  }
+  $('jn').className = note == '⏳' ? 'm' : 'm e';
+  $('jn').textContent = note;
+  if (st != k + t) { st = k + t; GZ() }
+}
+
+// Тапы — один обработчик на документ, как в /panel: идём вверх до элемента с data-k.
+// Кнопка хода скачивания: запрос берём из состояния по индексу, а не вписываем в атрибут
+document.addEventListener('click', e => {
+  let t = e.target, k;
+  while (t && !(k = t.getAttribute && t.getAttribute('data-k'))) t = t.parentNode;
+  const b = k && (S().b || [])[k.slice(1)];
+  b && ask(b[1]);
+});
+W.onEvent('chatDataChanged', () => { note = ''; draw() });
+draw();
+W.ready();
+</script>
