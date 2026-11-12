@@ -12,7 +12,8 @@
 body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 system-ui;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537}
 /* красное свечение шапки — отдельным слоем, а не фоном body: фон body движок повторяет, если блок выше содержимого */
 #gw{position:absolute;top:0;left:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
-#app{position:relative}
+/* строки экрана — position:relative: глитч сдвигает их через left, а ячейки внутри числятся за своей строкой */
+#app,#app>*{position:relative}
 .s0{--y:var(--l)}.s1{--y:#1ded83}.s3{--y:#f75049}
 #tt,.bd,.c b,#jt,.nm,.sm{letter-spacing:.05em}
 #h{display:flex;align-items:center;gap:8px;padding-bottom:7px;margin-bottom:8px;border-bottom:1px solid var(--l)}
@@ -142,14 +143,16 @@ const SEG = (() => {
 const show = (id, on) => { $(id).style.display = on ? 'block' : 'none' };
 
 // Глитч, как переход вкладок в /panel: пять кадров по 40 мс, в каждом строка может пропасть,
-// сдвинуться и перекраситься. Копий нет — только visibility, transform и цвет.
+// сдвинуться и перекраситься. Копий нет — только visibility, left и цвет.
+// Не transform: строку, которой скрипт три кадра подряд меняет transform, Telegram Desktop делает слоем,
+// а тап внутри такого слоя не находит ячейку (position:relative) и достаётся самой строке без data-k
 function GZ() {
   let n = 5, r = Math.random;
   clearInterval(GZ.t);
   const f = () => {
     for (let d = app.firstChild; d; d = d.nextSibling) {
       d.style.visibility = n && r() * 6 < n ? 'hidden' : '';
-      d.style.transform = n && r() < .5 ? `translate(${r() * 40 - 20 | 0}px,${r() * 8 - 4 | 0}px)` : '';
+      d.style.left = n && r() < .5 ? (r() * 40 - 20 | 0) + 'px' : '';
       d.classList.toggle('gz', !!n && r() < .5);
     }
     n-- || clearInterval(GZ.t);

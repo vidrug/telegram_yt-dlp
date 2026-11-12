@@ -14,7 +14,8 @@
 *{box-sizing:border-box}
 body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 system-ui;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537}
 #gw{position:absolute;top:0;left:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
-#app{position:relative}
+/* строки экрана — position:relative: глитч сдвигает их через left, а плитки внутри числятся за своей строкой */
+#app,#app>*{position:relative}
 #h{display:flex;align-items:flex-end;justify-content:space-between;padding-bottom:6px;border-bottom:1px solid var(--l)}
 #tt{font:500 25px/1.1 system-ui}
 #h small,.lab,.sm,.tg,.c b,.tag{letter-spacing:.05em}
@@ -131,13 +132,15 @@ function sec(t, name) {
     }).join('') + '</div>';
 }
 
-// Появление с глитчем, как переход вкладок в /panel: пять кадров по 40 мс
+// Появление с глитчем, как переход вкладок в /panel: пять кадров по 40 мс.
+// Сдвиг — left, не transform: строку, которой скрипт три кадра подряд меняет transform, Telegram Desktop
+// делает слоем, и тап по плитке внутри такого слоя достаётся самой строке без data-k
 function GZ() {
   let n = 5, r = Math.random;
   const f = () => {
     for (let d = app.firstChild; d; d = d.nextSibling) {
       d.style.visibility = n && r() * 6 < n ? 'hidden' : '';
-      d.style.transform = n && r() < .5 ? `translate(${r() * 40 - 20 | 0}px,${r() * 8 - 4 | 0}px)` : '';
+      d.style.left = n && r() < .5 ? (r() * 40 - 20 | 0) + 'px' : '';
       d.classList.toggle('gz', !!n && r() < .5);
     }
     n-- || clearInterval(t);
