@@ -38,10 +38,10 @@ body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 syste
 .leg>.fr{fill:rgba(240,181,55,.1)}
 .g{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
 .g2{grid-template-columns:1fr 1fr}
-.t{height:46px;padding:6px 9px 5px 11px;display:flex;flex-direction:column;justify-content:space-between}
+.t{height:46px;min-width:0;padding:6px 9px 5px 11px;display:flex;flex-direction:column;justify-content:space-between}
 .t div{display:flex;align-items:center;justify-content:space-between;gap:4px;white-space:nowrap}
 .q{color:var(--w);font:700 13.5px/1 system-ui;letter-spacing:.03em}
-.i{color:var(--h);font-size:11px;overflow:hidden;text-overflow:ellipsis}
+.i{min-width:0;color:var(--h);font-size:11px;overflow:hidden;text-overflow:ellipsis}
 .k{color:var(--h);font:600 11px/1 system-ui;letter-spacing:.05em;overflow:hidden;text-overflow:ellipsis}
 .z{color:var(--c);font:700 13px/1 system-ui}
 .tag{font:700 10px/1 system-ui;color:var(--y);border:1px solid var(--y);padding:2px 3px 1px}
@@ -72,7 +72,10 @@ let sv = -1, sa = -1, SV, SA, sb = 0, note = '', busy = 0, Wd = 336, D, P, pg, f
 try { sb = +localStorage.sb || 0 } catch (e) {}
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';'), N = s => esc(s).toUpperCase();
 const say = t => { note = t; draw() };
-const load = () => { try { D = JSON.parse(W.chatData) || {} } catch (e) { D = {} } P = { v: [D.v], a: [D.a] }; pg = { v: 0, a: 0 } };
+// Данные — разбором JS, а не JSON.parse: в Telegram Desktop JSON.parse читает числа с русской запятой,
+// [7,1] становится [7.1, 1], а 1.4 — 1. Бот присылает чистый JSON, он же — литерал JS
+const J = s => { try { return eval('(' + s + ')') || {} } catch (e) { return {} } };
+const load = () => { D = J(W.chatData); P = { v: [D.v], a: [D.a] }; pg = { v: 0, a: 0 } };
 const K = t => t == 'v' ? 0 : 1;
 
 // Запрос к боту — строго синхронно в обработчике тапа (правило песочницы); ok — что сделать с ответом
@@ -81,7 +84,7 @@ function ask(d, ok) {
   let p;
   try { p = W.request(d) } catch (e) { return say(e.message) }
   busy = 1; say('⏳');
-  p.then(a => { let r = {}; try { r = JSON.parse(a.result || '{}') } catch (e) {} note = r.e || ''; r.e || !ok || ok(r) },
+  p.then(a => { const r = J(a.result); note = r.e || ''; r.e || !ok || ok(r) },
     e => { note = e.code == 'RATE_LIMITED' ? 'Подожди пару секунд' : e.code })
     .finally(() => { busy = 0; draw() });
 }
@@ -108,7 +111,7 @@ const MB = x => !x ? '?' : x >= 1024 ? (x / 1024).toFixed(1) + 'G' : (x < 10 ? +
 const FR = (w, h, k, s) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path class="b" d="M0 1h4v' + (h - 2)
   + (s ? 'h-4z' : 'h-4v-' + (h / 4 - .5) + 'l2-2v-' + (h / 2 - 5) + 'l-2-2z') + '"/><path d="M7.5 1.5' + (k ? 'h' + (w * .3 | 0) + 'l4 4' : '')
   + 'H' + (w - 1.5) + 'V' + (h - 8.5) + 'l-7 7H7.5z"/></svg>';
-const CL = (x, w, h, k, c, f, s) => `<div class="c ${c}" onclick="${f}"${s || ''}>${FR(w, h, k, s)}${x}</div>`;
+const CL = (x, w, h, k, c, f, s) => `<div class="c ${c}" data-k="${f}"${s || ''}>${FR(w, h, k, s)}${x}</div>`;
 // «Редкость»: видео — по качеству, звук — по кодеку
 const RV = q => (h => h >= 2160 ? '#f0b537' : h >= 1440 ? '#9d2bf5' : h >= 1080 ? '#2f7fff' : h >= 720 ? '#1ded83' : '#6c6876')(parseInt(q) || 0);
 const RA = n => /^AAC/.test(n) ? '#1ded83' : /^Opus/.test(n) ? '#9d2bf5' : '#6c6876';
@@ -118,12 +121,13 @@ function sec(t, name) {
   const k = K(t), n = D.n[k], v = t == 'v', w = v ? (Wd - 8) / 3 : (Wd - 4) / 2;
   if (!D.c[k]) return '';
   return `<div class="lab"><span>${name} <small>${D.c[k]}</small></span>`
-    + (n > 1 ? `<i class="pb" onclick="flip('${t}',-1)">◀</i><i class="pn">${pg[t] + 1}/${n}</i><i class="pb" onclick="flip('${t}',1)">▶</i>` : '')
+    + (n > 1 ? `<i class="pb" data-k="${t}-">◀</i><i class="pn">${pg[t] + 1}/${n}</i><i class="pb" data-k="${t}+">▶</i>` : '')
     + `</div><div class="g${v ? '' : ' g2'}">` + P[t][pg[t]].map((x, i) => {
+      // ID длиннее 8 знаков (dash-1461665382806657v у Instagram) распирает сетку и руками его не набрать — не показываем
       const g = pg[t] * D.p[k] + i, on = (v ? sv : sa) == g;
-      return CL(`<div><span class="q">${N(x[1])}</span>${x[4] ? '<span class="tag">♪</span>' : `<span class="i">${esc(x[0])}</span>`}</div>`
+      return CL(`<div><span class="q">${N(x[1])}</span>${x[4] ? '<span class="tag">♪</span>' : x[0].length < 9 ? `<span class="i">${esc(x[0])}</span>` : ''}</div>`
         + `<div><span class="k">${N(x[2])}</span><span class="z">${MB(x[3])}</span></div>`,
-        w, 46, 0, 't' + (on ? ' on' : v && parseInt(x[1]) >= 2160 ? ' leg' : ''), `t${t}(${g})`, ` style="--a:${v ? RV(x[1]) : RA(x[1])}"`);
+        w, 46, 0, 't' + (on ? ' on' : v && parseInt(x[1]) >= 2160 ? ' leg' : ''), t + g, ` style="--a:${v ? RV(x[1]) : RA(x[1])}"`);
     }).join('') + '</div>';
 }
 
@@ -153,12 +157,21 @@ function draw() {
   if (D.c[0]) h += '<div class="lg">' + [['#f0b537', '4K'], ['#9d2bf5', '2K'], ['#2f7fff', '1080'], ['#1ded83', '720'], ['#6c6876', 'SD']]
     .map(x => `<span><i style="background:${x[0]}"></i>${x[1]}</span>`).join('') + '</div>';
   h += sec('v', 'ВИДЕО') + sec('a', 'ЗВУК') + `<div class="sm">${t ? N(t) : 'ВЫБЕРИ ВИДЕО И ЗВУК'}</div>`;
-  if (D.y) h += CL(`✂<span>ВЫРЕЗАТЬ РЕКЛАМУ</span><b>${sb ? 'ВКЛ' : 'ВЫКЛ'}</b>`, Wd, 34, 1, 'tg' + (sb ? ' on' : ''), 'tsb()');
-  app.innerHTML = h + '<div class="a">' + CL(`<b>СКАЧАТЬ${t && z ? ' · ' + z : ''}</b>`, (Wd - 4) * .75, 38, 1, t ? 'rd' : '', 'dl()')
-    + CL('<b>✕</b>', (Wd - 4) / 4, 38, 1, '', 'clr()') + '</div>' + (note ? `<div class="m">${esc(note)}</div>` : '');
+  if (D.y) h += CL(`✂<span>ВЫРЕЗАТЬ РЕКЛАМУ</span><b>${sb ? 'ВКЛ' : 'ВЫКЛ'}</b>`, Wd, 34, 1, 'tg' + (sb ? ' on' : ''), 's');
+  app.innerHTML = h + '<div class="a">' + CL(`<b>СКАЧАТЬ${t && z ? ' · ' + z : ''}</b>`, (Wd - 4) * .75, 38, 1, t ? 'rd' : '', 'g')
+    + CL('<b>✕</b>', (Wd - 4) / 4, 38, 1, '', 'c') + '</div>' + (note ? `<div class="m">${esc(note)}</div>` : '');
   if (first) { first = 0; GZ() }
 }
 
+// Тапы — один обработчик на документ, как в /panel: атрибуты onclick Telegram Desktop не вызывает.
+// data-k: v12 / a3 — плитка по номеру во всём списке, v+ / v- — листание, s, g, c — кнопки
+document.addEventListener('click', e => {
+  let t = e.target, k;
+  while (t && !(k = t.getAttribute && t.getAttribute('data-k'))) t = t.parentNode;
+  if (!k) return;
+  const a = k.slice(1);
+  a == '+' || a == '-' ? flip(k[0], a == '+' ? 1 : -1) : ({ v: tv, a: ta, s: tsb, g: dl, c: clr })[k[0]](+a);
+});
 W.onEvent('chatDataChanged', () => { note = ''; load(); draw() });
 load();
 draw();

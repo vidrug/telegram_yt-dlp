@@ -64,11 +64,13 @@ body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 syste
 <script>
 const W = window.TelegramWidget, $ = i => document.getElementById(i), app = $('app');
 // Выбор: sv — ячейка видео «строка.столбец», sa — номер звука (-1 — без звука), sb — вырезать рекламу.
-// mode — что нарисовано (pick/job); lastB, lastF, stage — что уже нарисовано в ходе скачивания
-let sv = '', sa = -1, sb = 0, note = '', busy = 0, Wd = 336, mode = '', lastB, lastF, stage;
+// md — что нарисовано (pick/job); lB, lF, st — что уже нарисовано в ходе скачивания
+let sv = '', sa = -1, sb = 0, note = '', busy = 0, Wd = 336, md = '', lB, lF, st;
 try { sb = +localStorage.sb || 0 } catch (e) {}
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';'), N = s => esc(s).toUpperCase();
-const S = () => { try { return JSON.parse(W.chatData) || {} } catch (e) { return {} } };
+// Данные — разбором JS, а не JSON.parse: в Telegram Desktop JSON.parse читает числа с русской запятой,
+// [7,1] становится [7.1, 1], а 1.4 — 1. Бот присылает чистый JSON, он же — литерал JS
+const J = s => { try { return eval('(' + s + ')') || {} } catch (e) { return {} } }, S = () => J(W.chatData);
 const say = t => { note = t; draw() };
 
 // Запрос к боту — строго синхронно в обработчике тапа (правило песочницы)
@@ -77,15 +79,10 @@ function ask(d) {
   let p;
   try { p = W.request(d) } catch (e) { return say(e.message) }
   busy = 1; say('⏳');
-  p.then(a => { try { note = JSON.parse(a.result || '{}').e || '' } catch (e) { note = '' } },
-    e => { note = e.code == 'RATE_LIMITED' ? 'Подожди пару секунд' : e.code })
+  p.then(a => { note = J(a.result).e || '' },
+    e => { note = e.code == 'RATE_LIMITED' ? 'Подожди секунду' : e.code })
     .finally(() => { busy = 0; draw() });
 }
-
-// Обработчики тапов — объявления function: их вызывают атрибуты onclick.
-// act — кнопка хода скачивания: запрос берём из состояния по индексу, а не вписываем в атрибут
-function act(i) { ask(S().b[i][1]) }
-function tsb() { sb = 1 - sb; try { localStorage.sb = sb } catch (e) {} draw() }
 
 // Ячейка матрицы: размер в МБ (0 — неизвестен), [МБ, 1] — звук уже внутри, null — формата нет
 const cell = (s, k) => { const [r, c] = k.split('.'); return k && s.r[r] ? s.r[r][1][c] : null };
@@ -99,11 +96,6 @@ function setV(k, f) {
   if (Array.isArray(cell(s, sv))) sa = -1; else if (sv && sa < 0 && s.a.length) sa = 0;
   draw();
 }
-// у видео со звуком внутри отдельный звук не выбирается — итог и так пишет «со звуком»
-function setA(i) { if (!Array.isArray(cell(S(), sv))) sa = sa == i ? -1 : i; draw() }
-function clr() { sv = ''; sa = -1; draw() }
-// пока ничего не выбрано, «Скачать» молчит: итог над кнопками и так просит выбрать
-function go() { (sv || sa >= 0) && ask('g:' + sv + ':' + (sa < 0 ? '' : sa) + ':' + sb) }
 
 // Рамки — inline-SVG в точных пикселях, как FR() в панели: clip-path в песочнице запрещён.
 // Только прямые отрезки — разборщик SVG в Telegram самодельный.
@@ -111,7 +103,7 @@ const FR = (w, h, k) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" prese
   + 'h-4v-' + (h / 4 - .5) + 'l2-2v-' + (h / 2 - 5) + 'l-2-2z"/><path d="M7.5 1.5' + (k ? 'h' + (w * .3 | 0) + 'l4 4' : '')
   + 'H' + (w - 1.5) + 'V' + (h - 9.5) + 'l-8 8H7.5z"/></svg>';
 // ячейка: w — ширина рамки, k — ступенька кнопки; CW(n) — ширина ячейки, когда их n в ряду
-const CL = (x, w, k, on, f, h = 34) => `<div class="c${on ? ' on' : ''}" style="height:${h}px" onclick="${f}">${FR(w, h, k)}${x}</div>`;
+const CL = (x, w, k, on, f, h = 34) => `<div class="c${on ? ' on' : ''}" style="height:${h}px" data-k="${f}">${FR(w, h, k)}${x}</div>`;
 const CW = n => (Wd + 4) / n - 4;
 const SG = a => `<div class="gr" style="grid-template-columns:${'1fr '.repeat(a.length)}">${a.join('')}</div>`;
 const HD = (t, x) => `<div id="h"><div id="hl"><span id="tt">${t}</span>${x || ''}</div><span id="pc"></span></div>`;
@@ -125,20 +117,20 @@ function pick(s) {
   const Q = n > 2 ? [[0, 'ЛУЧШЕЕ'], [n >> 1, 'СРЕДНЕЕ'], [n - 1, 'МИНИМУМ']] : n > 1 ? [[0, 'ЛУЧШЕЕ'], [1, 'МИНИМУМ']] : [];
   let h = HD('ФОРМАТ') + (Q.length ? SG(Q.map(([r, t]) => {
     const k = r + '.' + R[r][1].findIndex(x => x != null);
-    return CL(`<b>${t}</b>`, CW(Q.length), 1, k == sv, `setV('${k}',1)`);
+    return CL(`<b>${t}</b>`, CW(Q.length), 1, k == sv, 'q' + k);
   })) : '');
   if (n) h += MR(C.length, '<span class="nm">ВИДЕО</span>' + C.map(c => `<span>${N(c)}</span>`).join(''), ' mh')
     + R.map((x, r) => MR(C.length, `<span class="nm">${N(x[0])}</span>` + x[1].map((v, c) => v == null ? '<span>—</span>'
-      : CL(`<b>${MB(v[0] ?? v)}${v.length ? '♪' : ''}</b>`, MW(C.length), 0, sv == r + '.' + c, `setV('${r}.${c}')`, 28)).join(''))).join('');
+      : CL(`<b>${MB(v[0] ?? v)}${v.length ? '♪' : ''}</b>`, MW(C.length), 0, sv == r + '.' + c, 'v' + r + '.' + c, 28)).join(''))).join('');
   if (Z.length) h += MR(Z.length, '<span class="nm">ЗВУК</span>'
-    + Z.map((x, i) => CL(`<b>${N(x[0])}</b>`, MW(Z.length), 0, sa == i, `setA(${i})`, 28)).join(''));
+    + Z.map((x, i) => CL(`<b>${N(x[0])}</b>`, MW(Z.length), 0, sa == i, 'a' + i, 28)).join(''));
   // итог: что выбрано и сколько весит (если размеры известны)
   const v = cell(s, sv), mx = Array.isArray(v), a = sa >= 0 && !mx && Z[sa], [r, c] = sv.split('.');
   const t = [sv && R[r][0] + ' ' + C[c] + (mx ? ' со звуком' : a ? '' : ' без звука'), a && a[0]].filter(Boolean).join(' + ');
   const vm = sv ? +(mx ? v[0] : v) : 0, am = a ? a[1] : 0;
   h += `<div class="sm">${t ? N(t) + ((!sv || vm) && (!a || am) ? ' ≈ ' + MB(vm + am) : '') : 'ВЫБЕРИ ФОРМАТ'}</div>`;
-  if (s.y) h += CL(`<span class="lb">✂️ Вырезать рекламу</span><span class="bd s${sb}">${sb ? 'ДА' : 'НЕТ'}</span>`, CW(1), 0, 0, 'tsb()');
-  return h + SG([CL('<b>СКАЧАТЬ</b>', CW(2), 1, t, 'go()'), CL('<b>СБРОС</b>', CW(2), 1, 0, 'clr()')]);
+  if (s.y) h += CL(`<span class="lb">✂️ Вырезать рекламу</span><span class="bd s${sb}">${sb ? 'ДА' : 'НЕТ'}</span>`, CW(1), 0, 0, 's');
+  return h + SG([CL('<b>СКАЧАТЬ</b>', CW(2), 1, t, 'g'), CL('<b>СБРОС</b>', CW(2), 1, 0, 'c')]);
 }
 
 // Сегменты шкалы одним градиентом с явными точками: 6 px заливки, 2 px зазора
@@ -168,8 +160,8 @@ function GZ() {
 // Ход скачивания: разметка создаётся один раз, дальше меняются только тексты,
 // ширина и цвет — так ширина плавно доезжает (transition), а анимации не перезапускаются
 function job(s) {
-  if (mode != 'job') {
-    mode = 'job'; lastB = lastF = stage = '';
+  if (md != 'job') {
+    md = 'job'; lB = lF = st = '';
     app.innerHTML = HD('ЗАГРУЗКА', '<span class="bd" id="sp"></span>') + '<div class="lb" id="jl"></div>'
       + '<div class="c" id="jc"><span id="jcf"></span><span id="jt"></span></div>'
       + `<div class="c" id="jb" style="height:30px">${FR(Wd, 30, 0)}<div class="tk" id="jr"><span class="ib"></span><span class="sg" id="g1"></span></div>`
@@ -178,9 +170,9 @@ function job(s) {
     $('g1').style.backgroundImage = $('g2').style.backgroundImage = SEG;
   }
   // k — этап для бейджа и скобы статуса: 0 стоп, 1 готово, 2 в работе, 3 ошибка.
-  // Эмодзи в начале статуса и «— 45%» в конце убираем: этап — бейджем, процент — в шапке
+  // статус бот присылает заглавными, без эмодзи и «— 45%» (этап — бейджем, процент — в шапке)
   const p = s.p, k = s.k == 'e' ? 3 : s.k == 'ok' ? 1 : p == null ? 0 : 2, b = JSON.stringify(s.b),
-    t = String(s.t || '').replace(/^[^0-9A-Za-zА-яЁё]+/, '').replace(/\s*—\s*\d+%$/, '').toUpperCase();
+    t = s.t || '';
   $('sp').className = 'bd s' + k;
   $('sp').textContent = ['СТОП', 'ГОТОВО', { v: 'ВИДЕО', a: 'АУДИО' }[s.w] || 'В РАБОТЕ', 'ОШИБКА'][k];
   $('pc').textContent = p >= 0 ? (p | 0) + '%' : '';
@@ -189,29 +181,47 @@ function job(s) {
   $('jc').className = 'c s' + k;
   // рамку статуса — под его высоту (текст бывает в две строки)
   const f = Wd + 'x' + $('jc').offsetHeight;
-  if (f != lastF) { lastF = f; $('jcf').innerHTML = FR(Wd, $('jc').offsetHeight || 34, 0) }
+  if (f != lF) { lF = f; $('jcf').innerHTML = FR(Wd, $('jc').offsetHeight || 34, 0) }
   show('jb', p != null); show('jr', p < 0); show('jk', p >= 0);
   // видео красное, звук циановый — как прокси и VPN в панели
   if (p >= 0) { $('jf').style.width = Math.min(100, p) + '%'; $('jf').style.background = s.w == 'a' ? '#5ef6ff' : '#f75049' }
   $('jd').textContent = s.d || '';
   // кнопки пересоздаём только при изменении — не сбивать нажатие
-  if (b != lastB) { lastB = b; $('ja').innerHTML = s.b ? SG(s.b.map((x, i) => CL(`<b>${N(x[0])}</b>`, CW(s.b.length), 1, 0, `act(${i})`))) : '' }
+  if (b != lB) { lB = b; $('ja').innerHTML = s.b ? SG(s.b.map((x, i) => CL(`<b>${N(x[0])}</b>`, CW(s.b.length), 1, 0, 'b' + i))) : '' }
   $('jn').className = note == '⏳' ? 'm' : 'm e';
   $('jn').textContent = note;
-  if (stage != k + t) { stage = k + t; GZ() }
+  if (st != k + t) { st = k + t; GZ() }
 }
 
 function draw() {
   Wd = app.offsetWidth || Wd;
   const s = S();
   if (s.s == 'job') return job(s);
-  const g = mode != 'pick';
-  mode = 'pick';
+  const g = md != 'pick';
+  md = 'pick';
   app.innerHTML = pick(s) + (note ? `<div class="m${note == '⏳' ? '' : ' e'}">${esc(note)}</div>` : '');
   // появление с глитчем — при первом показе и при возврате к выбору после скачивания
   if (g) GZ();
 }
 
+// Тапы — один обработчик на документ, как в /panel: атрибуты onclick Telegram Desktop не вызывает.
+// data-k: буква — действие, дальше — аргумент
+const F = {
+  v: setV, q: k => setV(k, 1),
+  // у видео со звуком внутри отдельный звук не выбирается — итог и так пишет «со звуком»
+  a: i => { Array.isArray(cell(S(), sv)) || (sa = sa == i ? -1 : i); draw() },
+  // кнопка хода скачивания: запрос берём из состояния по индексу, а не вписываем в атрибут
+  b: i => ask(S().b[i][1]),
+  s: () => { sb = 1 - sb; try { localStorage.sb = sb } catch (e) {} draw() },
+  // пока ничего не выбрано, «Скачать» молчит: итог над кнопками и так просит выбрать
+  g: () => (sv || sa >= 0) && ask('g:' + sv + ':' + (sa < 0 ? '' : sa) + ':' + sb),
+  c: () => { sv = ''; sa = -1; draw() }
+};
+document.addEventListener('click', e => {
+  let t = e.target, k;
+  while (t && !(k = t.getAttribute && t.getAttribute('data-k'))) t = t.parentNode;
+  k && F[k[0]](k.slice(1));
+});
 W.onEvent('chatDataChanged', () => { note = ''; draw() });
 draw();
 W.ready();

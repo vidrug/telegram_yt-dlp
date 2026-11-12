@@ -236,7 +236,17 @@ def _dump(state: dict) -> str:
     return data
 
 
+def _status(t: str) -> str:
+    """Статус для шапки хода скачивания: без эмодзи в начале и «— 45%» в конце, заглавными.
+
+    Этап виджет показывает бейджем, процент — в шапке; чистит бот, чтобы код виджета влез в 4096 байт.
+    """
+    return re.sub(r"\s*—\s*\d+%$", "", re.sub(r"^[^0-9A-Za-zА-яЁё]+", "", t)).upper()
+
+
 async def set_state(chat_id: int, message_id: int, state: dict) -> None:
+    if state.get("s") == "job" and "t" in state:
+        state = {**state, "t": _status(state["t"])}
     try:
         await bot(EditMessageWidgetData(chat_id=chat_id, message_id=message_id, chat_data=_dump(state)))
     except TelegramAPIError as e:
@@ -588,7 +598,7 @@ async def start_progress(
     if not (available and WIDGET_PROGRESS):
         return False
     first = {"s": "job", "l": label + (" · ✂️ без рекламы" if sponsorblock else ""),
-             "t": "⏳ Подготовка…", "p": -1, "b": [["Отменить", "x"]]}
+             "t": _status("⏳ Подготовка…"), "p": -1, "b": [["Отменить", "x"]]}
     try:
         msg = await bot(SendWidget(
             chat_id=chat_id, html=WIDGET_HTML, chat_data=_dump(first),
