@@ -1,146 +1,191 @@
 <!--
-  Виджет выбора формата и прогресса скачивания (Bot API 10.4).
-  HTML отправленного виджета изменить нельзя, поэтому он — тонкий рендерер:
-  все тексты, статусы и кнопки присылает бот в chat_data (см. bot/widget.py).
-  Лимит: 4096 байт после zlib -9. Комментарии и отступы бот вырезает перед отправкой (_load_html),
-  поэтому код ниже записан плотно, а пояснения вынесены в комментарии.
-  Оформление — как у панели /panel (bot/widget_panel.html, docs/deployment-china.md, «Оформление»):
-  формы интерфейса Cyberpunk 2077, палитра из UI-гайда игры, фон виджет красит сам.
+  Виджет выбора формата (Bot API 10.4), вариант «Чипы». Только выбор: ход скачивания бот шлёт отдельным виджетом.
+  HTML отправленного виджета изменить нельзя, поэтому он — тонкий рендерер состояния из chat_data (см. bot/widget.py):
+    {"s":"pick","c":[кодеки],"r":[[качество,[ячейки по кодекам]],...],"a":[[звук,МБ],...],"y":1}
+  ячейка: число — МБ видео без звука (0 — размер неизвестен), [МБ, 1] — звук внутри, null — формата нет.
+  Другое состояние ({"s":"job","t":"СЕССИЯ ИСТЕКЛА…"}) — только текст, без кнопок.
+  Каждый тип элемента выглядит по-своему, как в интерфейсе Cyberpunk 2077:
+    быстрый выбор — вкладки с сегментом подчёркивания; ячейки матрицы и звука — чипы: тонкий контур, значение,
+    шкала размера внизу, жёлтый ярлык ♪, пустой слот пунктиром, выбранный — красная заливка и уголки курсора;
+    «Вырезать рекламу» — строка с переключателем; «Скачать» — жёлтая главная кнопка; ✕ — квадратная иконка.
+  Лимит: 4096 байт после zlib -9. Комментарии и отступы бот вырезает перед отправкой (_load_html).
 -->
 <style>
 *{box-sizing:border-box}
-body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 system-ui;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537}
-/* красное свечение шапки — отдельным слоем, а не фоном body: фон body движок повторяет, если блок выше содержимого */
-#gw{position:absolute;top:0;left:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
-/* строки экрана — position:relative: глитч сдвигает их через left, а ячейки внутри числятся за своей строкой */
-#app,#app>*{position:relative}
-.s0{--y:var(--l)}.s1{--y:#1ded83}.s3{--y:#f75049}
-#tt,.bd,.c b,#jt,.nm,.sm{letter-spacing:.05em}
-#h{display:flex;align-items:center;gap:8px;padding-bottom:7px;margin-bottom:8px;border-bottom:1px solid var(--l)}
-#hl{flex:1;white-space:nowrap}
-#tt,#pc{font:500 25px/1.1 system-ui}
-#pc{color:var(--c)}
-.bd{display:inline-block;border:1px solid var(--y);color:var(--y);font:600 12px/1 system-ui;padding:3px 5px 3px 6px;white-space:nowrap}
-#sp{position:relative;top:-4px;margin-left:8px}
-/* ячейка: слева «скоба» цвета строки, контур со срезанным нижним правым углом; кнопка — плюс ступенька сверху */
-.c{position:relative;z-index:0;display:flex;align-items:center;gap:8px;min-width:0;padding:0 14px 0 17px;margin-bottom:4px}
-.gr{display:grid;gap:4px;margin:8px 0}
-.gr .c,.mr .c{margin:0;justify-content:center;padding:3px 4px 0 11px}
-.fr{position:absolute;left:0;top:0;width:100%;height:100%;z-index:-1;fill:rgba(247,80,73,.08);stroke:var(--l)}
-.fr .b{fill:var(--r);stroke:none}
-#jc .b{fill:var(--y)}
-.on>.fr{fill:rgba(247,80,73,.34);stroke:var(--r)}
-.c b{color:var(--c);font:600 13px/1 system-ui}
+body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:600 13px/1 system-ui;letter-spacing:.05em;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537;--g:#1ded83}
+/* красное свечение шапки — отдельным слоем перед #app: в hit-test он ниже строк и тапы не забирает */
+#gw{position:absolute;left:0;top:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
+/* строки экрана и всё, что нажимается, — position:relative: глитч сдвигает строки через left, а ячейки внутри числятся за своей строкой */
+#app,#app>*,.tb,.ch,.tr,.dl,.x{position:relative}
+/* рамки — inline-SVG поверх всего блока */
+svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(--l)}
+/* микротекст: служебные коды и мелкая печать */
+.u{font:600 8px/1.25 system-ui;color:var(--l);white-space:nowrap}
+/* шапка: заголовок и справа столбик служебных кодов, как в «Всех форматах» */
+#h{display:flex;align-items:center;padding-bottom:6px;border-bottom:1px solid var(--l)}
+#tt{font:500 25px/1.1 system-ui}
+#h .u{margin-left:auto;text-align:right}
+/* быстрый выбор — вкладки: код ячейки над подписью, сегмент подчёркивания; активная — циан.
+   Подпись — ярко-красная, код — 70 %: вкладки — управление, а не заголовки столбцов (те мельче и тусклее) */
+#tb{display:flex;gap:3px;margin:6px 0}
+.tb{flex:1;min-width:0;padding:3px 0 6px;text-align:center;white-space:nowrap;border-bottom:2px solid var(--l)}
+.tb .u{display:block;margin-bottom:4px;color:var(--h)}
+.tb.on{color:var(--c);border-color:var(--c);background:linear-gradient(rgba(94,246,255,0),rgba(94,246,255,.14))}
+.tb.on .u{color:var(--c)}
+/* матрица: строки — качество, столбцы — кодеки, последняя строка — звук */
+.mr{display:grid;gap:4px;margin-bottom:3px;align-items:center}
+.mh{color:rgba(247,80,73,.5);font-size:11px;text-align:center}
+/* подпись строки: слева риска качества в цветах «Всех форматов» (4K, 2K, 1080, 720, SD) */
+.nm{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--w);font-size:12px;border-left:3px solid transparent;padding-left:6px}
+.sr{margin-top:6px}
+/* чип: тонкий контур, значение по центру, внизу шкала размера (корень доли от самого большого файла) */
+.ch{height:30px;min-width:0;display:flex;align-items:center;justify-content:center;border:1px solid rgba(247,80,73,.25);background:rgba(247,80,73,.06)}
+.ch b{white-space:nowrap;padding-bottom:2px;color:var(--c);font-weight:600}
+.t{position:absolute;left:3px;bottom:3px;width:calc(100% - 6px);height:2px;background:rgba(247,80,73,.16)}
+.t i{display:block;height:2px;background:rgba(94,246,255,.7)}
+/* пустой слот — пунктир; звук, когда выбрано видео со звуком внутри, — такие же пустые слоты с тусклой подписью */
+.no{border:1px dashed rgba(247,80,73,.22);background:none}
+.no b{color:var(--l)}
+/* звук внутри — жёлтый ярлык, как бейджи предметов */
+.tg{position:absolute;top:2px;right:2px;padding:1px 2px 0;background:var(--y);color:#0e0e17;font:700 8px/1 system-ui}
+/* выбранный чип — заливка, яркий контур и уголки курсора выбора (тапы уголки не забирают) */
+.ch.on{background:rgba(247,80,73,.36);border-color:var(--r)}
 .on b{color:var(--w)}
-.lb,.mr>.nm{flex:1;min-width:0;color:var(--c);font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#jl{margin-bottom:8px}
-#jc{min-height:34px;padding:6px 14px 6px 17px}
-#jt{color:var(--w);font-weight:600;font-size:14px}
-.m{color:var(--h);font-size:13px}
-#jd{margin-top:4px}
-.e{color:var(--y)}
-/* матрица выбора: строки — качество, столбцы — кодеки, последняя строка — звук */
-.mr{display:grid;gap:3px;margin-bottom:3px;align-items:center}
-.mr>span{text-align:center;color:var(--l);font-size:13px}
-.mr>.nm{text-align:left}
-.mh>span,.mh>.nm{color:var(--h);font:600 12px/1 system-ui}
-.sm{margin:9px 0 7px;color:var(--w);font-weight:600;font-size:13px}
-/* полоска: сегменты, как у шкал в игре; по заливке бежит блик. Родной рендерер Telegram не анимирует
-   background-position и не повторяет плитку — движение только transform, сегменты — градиент из JS (SEG) */
-.tk{position:absolute;top:8px;left:15px;width:calc(100% - 31px);height:calc(100% - 16px);overflow:hidden}
-#jf{position:relative;width:0;height:100%;overflow:hidden;background:#f75049;transition:width 2.8s linear}
-.sw,.sg,.ib{position:absolute;top:0;left:0;height:100%}
-.sw{width:100%;background:linear-gradient(90deg,rgba(255,255,255,0) 30%,rgba(255,255,255,.5) 50%,rgba(255,255,255,0) 70%);animation:sw 1.6s linear infinite}
-@keyframes sw{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
-.sg{width:100vw}
-/* этапы без процента: жёлтый блок ездит по тусклой шкале */
-#jr{background:rgba(240,181,55,.12)}
-.ib{width:30%;background:#f0b537;animation:ib 1.4s linear infinite}
-@keyframes ib{from{transform:translateX(-100%)}to{transform:translateX(334%)}}
+.on .t i{background:var(--w)}
+.k{position:absolute;width:6px;height:6px;border:0 solid var(--w);pointer-events:none}
+.kl{left:-3px;border-left-width:2px}
+.kr{right:-3px;border-right-width:2px}
+.kt{top:-3px;border-top-width:2px}
+.kb{bottom:-3px;border-bottom-width:2px}
+.sm{margin:7px 0 5px;color:var(--w);line-height:1.35}
+/* «Вырезать рекламу» — строка без рамки с настоящим переключателем: угловатая дорожка и ползунок */
+.sw{display:flex;align-items:center;gap:8px;padding:6px 0;border:solid rgba(247,80,73,.2);border-width:1px 0}
+.sl{flex:1;color:var(--w)}
+.sl .u{display:block;margin-top:4px}
+.tr{width:44px;height:20px}
+.tr i{position:absolute;left:4px;top:4px;width:16px;height:12px;background:var(--l)}
+.sw.on svg{fill:rgba(29,237,131,.16);stroke:var(--g)}
+.sw.on .tr i{left:24px;background:var(--g)}
+.sw.on>.u{color:var(--g)}
+/* «Скачать» — главная: сплошной жёлтый, тёмный текст, свечение; без выбора и пока идёт запрос — тёмная с жёлтым контуром.
+   Свечение — тень вложенного блока по корпусу кнопки, чтобы ореол шёл вдоль заливки, а не по всей коробке.
+   Внизу слева — мелкий код запроса, как микротекст в кнопках меню игры. На широком Desktop пара кнопок — справа
+   (max-width и margin-left:auto у блока: ширина берётся из вёрстки, а не из offsetWidth) */
+#ac{display:flex;gap:8px;margin:8px 0 0 auto;max-width:420px}
+.dl{flex:1;z-index:0;height:40px;display:flex;align-items:center;justify-content:center;padding-bottom:5px}
+.gl{position:absolute;left:8px;top:6px;width:calc(100% - 10px);height:32px;z-index:-1}
+.on .gl{box-shadow:0 0 14px rgba(240,181,55,.45)}
+.fr{z-index:-1;fill:#0e0e17;stroke:rgba(240,181,55,.45)}
+.fr .b{fill:rgba(240,181,55,.45);stroke:none}
+.dl b{color:rgba(240,181,55,.55);font:700 14px/1 system-ui;letter-spacing:.08em}
+.dl .u{position:absolute;left:14px;bottom:4px;color:rgba(240,181,55,.45)}
+.on .fr,.on .b{fill:var(--y);stroke:var(--y)}
+.dl.on b{color:#0e0e17}
+.dl.on .u{color:rgba(14,14,23,.6)}
+/* ✕ — квадратная иконка: волосяной контур, уголки, крест из двух линий; горит, только когда есть что сбросить */
+.x{width:40px;height:40px}
+.x svg{stroke:rgba(247,80,73,.22)}
+.x .c{stroke:var(--l);stroke-width:1.6}
+.x.on .o{stroke:var(--h)}
+.x.on .c{stroke:var(--c)}
+/* ответ бота — строка предупреждения под кнопками с жёлтым ярлыком «!» */
+.m{margin-top:8px;color:var(--y);font-size:12px;line-height:1.35}
+.m b{padding:0 5px;margin-right:6px;background:var(--y);color:#0e0e17}
 /* кадр глитча: строка перекрашивается в циан с жёлтым (как переход вкладок в /panel) */
 .gz{color:#5ef6ff;--r:#5ef6ff;--l:#5ef6ff;--h:#5ef6ff;--c:#f0b537;--w:#f0b537}
 </style>
 <div id="gw"></div>
 <div id="app"></div>
 <script>
-const W = window.TelegramWidget, $ = i => document.getElementById(i), app = $('app');
-// Выбор: sv — ячейка видео «строка.столбец», sa — номер звука (-1 — без звука), sb — вырезать рекламу.
-// md — что нарисовано (pick/job); lB, lF, st — что уже нарисовано в ходе скачивания
-let sv = '', sa = -1, sb = 0, note = '', busy = 0, Wd = 336, md = '', lB, lF, st;
+const W = window.TelegramWidget, app = document.getElementById('app');
+// Выбор: sv — ячейка видео «строка.столбец», sa — номер звука (-1 — без звука), sb — вырезать рекламу;
+// md — что нарисовано, mx — самый большой файл на экране (масштаб шкал)
+let sv = '', sa = -1, sb = 0, note = '', busy = 0, Wd = 336, md, mx;
 try { sb = +localStorage.sb || 0 } catch (e) {}
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';'), N = s => esc(s).toUpperCase();
 // Данные — разбором JS, а не JSON.parse: в Telegram Desktop JSON.parse читает числа с русской запятой,
 // [7,1] становится [7.1, 1], а 1.4 — 1. Бот присылает чистый JSON, он же — литерал JS
 const J = s => { try { return eval('(' + s + ')') || {} } catch (e) { return {} } }, S = () => J(W.chatData);
-const say = t => { note = t; draw() };
 
-// Запрос к боту — строго синхронно в обработчике тапа (правило песочницы)
+// Запрос к боту — строго синхронно в обработчике тапа (правило песочницы), не больше одного сразу.
+// Пока он идёт, «Скачать» пишет «ЗАПРОС…»; ответ с ошибкой — строкой под кнопками
 function ask(d) {
   if (busy) return;
   let p;
-  try { p = W.request(d) } catch (e) { return say(e.message) }
-  busy = 1; say('⏳');
+  try { p = W.request(d) } catch (e) { note = e.message; return draw() }
+  busy = 1; note = ''; draw();
   p.then(a => { note = J(a.result).e || '' },
-    e => { note = e.code == 'RATE_LIMITED' ? 'Подожди секунду' : e.code })
+    e => { note = e.code == 'RATE_LIMITED' ? 'СЕКУНДУ…' : e.code })
     .finally(() => { busy = 0; draw() });
 }
 
 // Ячейка матрицы: размер в МБ (0 — неизвестен), [МБ, 1] — звук уже внутри, null — формата нет
-const cell = (s, k) => { const [r, c] = k.split('.'); return k && s.r[r] ? s.r[r][1][c] : null };
+const cell = (s, k) => { const [r, c] = k.split('.'); return k ? s.r[r]?.[1][c] : null };
 const MB = x => !x ? '?' : x >= 1024 ? (x / 1024).toFixed(1) + 'G' : (x < 10 ? +x.toFixed(1) : Math.round(x)) + 'M';
+// запрос «Скачать»: g:<строка.столбец>:<звук>:<sb>; ничего не выбрано — запроса нет
+const RQ = () => (sv || sa >= 0) && `g:${sv}:${sa < 0 ? '' : sa}:${sb}`;
 
-// Тап по видео: повторный снимает выбор (f — быстрая кнопка, всегда выбирает).
-// Видео со звуком внутри снимает звук, к видео без звука подставляется лучший звук.
+// Тап по видео: повторный снимает выбор (f — быстрый выбор, всегда выбирает).
+// Видео со звуком внутри снимает звук, к видео без звука подставляется первый звук.
 function setV(k, f) {
   const s = S();
   sv = sv == k && !f ? '' : k;
-  if (Array.isArray(cell(s, sv))) sa = -1; else if (sv && sa < 0 && s.a.length) sa = 0;
+  if (cell(s, sv)?.[1]) sa = -1; else if (sv && sa < 0 && s.a.length) sa = 0;
   draw();
 }
 
-// Рамки — inline-SVG в точных пикселях, как FR() в панели: clip-path в песочнице запрещён.
-// Только прямые отрезки — разборщик SVG в Telegram самодельный.
-const FR = (w, h, k) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path class="b" d="M0 1h4v' + (h - 2)
-  + 'h-4v-' + (h / 4 - .5) + 'l2-2v-' + (h / 2 - 5) + 'l-2-2z"/><path d="M7.5 1.5' + (k ? 'h' + (w * .3 | 0) + 'l4 4' : '')
-  + 'H' + (w - 1.5) + 'V' + (h - 9.5) + 'l-8 8H7.5z"/></svg>';
-// ячейка: w — ширина рамки, k — ступенька кнопки; CW(n) — ширина ячейки, когда их n в ряду
-const CL = (x, w, k, on, f, h = 34) => `<div class="c${on ? ' on' : ''}" style="height:${h}px" data-k="${f}">${FR(w, h, k)}${x}</div>`;
-const CW = n => (Wd + 4) / n - 4;
-const SG = a => `<div class="gr" style="grid-template-columns:${'1fr '.repeat(a.length)}">${a.join('')}</div>`;
-const HD = (t, x) => `<div id="h"><div id="hl"><span id="tt">${t}</span>${x || ''}</div><span id="pc"></span></div>`;
-// строка матрицы: подпись слева (74 px) и n ячеек; MW(n) — ширина ячейки в ней
-const MR = (n, x, c) => `<div class="mr${c || ''}" style="grid-template-columns:74px ${'1fr '.repeat(n)}">${x}</div>`;
-const MW = n => (Wd - 74) / n - 3;
+// чип: k — тап, t — подпись (у видео — размер), z — размер в МБ, x — ярлык в углу; у выбранного — уголки курсора.
+// Шкала — корень доли от самого большого файла на экране (общая для видео и звука), чтобы и мелкие были видны
+const CH = (k, t, z, on, x) => `<div class="ch${on ? ' on' : ''}" data-k="${k}"><b>${t || MB(z)}</b><i class="t"><i style="width:${Math.sqrt(z / mx) * 100 | 0}%"></i></i>${x}`
+  + (on ? '<i class="k kl kt"></i><i class="k kr kt"></i><i class="k kl kb"></i><i class="k kr kb"></i>' : '') + '</div>';
+// строка матрицы: подпись (66 px) и n ячеек
+const G = (n, x, c) => `<div class="mr${c}" style="grid-template-columns:66px${' 1fr'.repeat(n)}">${x}</div>`;
+// цвет риски качества — как полоса редкости в «Всех форматах»: 4K, 2K, 1080, 720, остальное
+// (у подписи без числа риски нет: undefined — недопустимый цвет, остаётся прозрачный)
+const QC = q => ['var(--y)', '#9d2bf5', '#2f7fff', 'var(--g)', '#6c6876'][[2160, 1440, 1080, 720, 0].findIndex(t => parseInt(q) >= t)];
+// шапка: заголовок и столбик служебных кодов справа
+const HD = a => `<div id="h"><span id="tt">ФОРМАТ</span><i class="u">${a}</i></div>`;
 
 function pick(s) {
-  const R = s.r, Z = s.a, C = s.c, n = R.length;
+  const R = s.r, Z = s.a, C = s.c, n = R.length, nc = C.length;
+  // выбор, которого в новом состоянии нет, снимается; у видео со звуком внутри звука нет
+  const v = cell(s, sv), m = v?.[1];
+  if (v == null) sv = '';
+  if (m || !Z[sa]) sa = -1;
+  // mx — самый большой файл (масштаб всех шкал), nf — сколько форматов на экране
+  let nf = Z.length;
+  mx = Math.max(0, ...Z.map(x => x[1]));
+  R.forEach(x => x[1].forEach(v => v != null && (nf++, mx = Math.max(mx, v[0] ?? v))));
   // быстрые кнопки выбирают ячейку: первый столбец с форматом (кодеки идут от самого совместимого)
-  const Q = n > 2 ? [[0, 'ЛУЧШЕЕ'], [n >> 1, 'СРЕДНЕЕ'], [n - 1, 'МИНИМУМ']] : n > 1 ? [[0, 'ЛУЧШЕЕ'], [1, 'МИНИМУМ']] : [];
-  let h = HD('ФОРМАТ') + (Q.length ? SG(Q.map(([r, t]) => {
-    const k = r + '.' + R[r][1].findIndex(x => x != null);
-    return CL(`<b>${t}</b>`, CW(Q.length), 1, k == sv, 'q' + k);
-  })) : '');
-  if (n) h += MR(C.length, '<span class="nm">ВИДЕО</span>' + C.map(c => `<span>${N(c)}</span>`).join(''), ' mh')
-    + R.map((x, r) => MR(C.length, `<span class="nm">${N(x[0])}</span>` + x[1].map((v, c) => v == null ? '<span>—</span>'
-      : CL(`<b>${MB(v[0] ?? v)}${v.length ? '♪' : ''}</b>`, MW(C.length), 0, sv == r + '.' + c, 'v' + r + '.' + c, 28)).join(''))).join('');
-  if (Z.length) h += MR(Z.length, '<span class="nm">ЗВУК</span>'
-    + Z.map((x, i) => CL(`<b>${N(x[0])}</b>`, MW(Z.length), 0, sa == i, 'a' + i, 28)).join(''));
+  const Q = [[0, 'ЛУЧШЕЕ'], n > 2 && [n >> 1, 'СРЕДНЕЕ'], [n - 1, 'МИНИМУМ']].filter(x => x && n > 1);
+  let h = HD(`FMT ${nf}<br>MAX ${MB(mx)}`);
+  if (Q.length) h += '<div id="tb">' + Q.map(([r, t]) => {
+    const c = R[r][1].findIndex(x => x != null), k = r + '.' + c;
+    return `<div class="tb${k == sv ? ' on' : ''}" data-k="q${k}"><i class="u">${N(R[r][0] + ' ' + C[c])}</i>${t}</div>`;
+  }).join('') + '</div>';
+  if (n) h += G(nc, `<i class="u">ВИДЕО · ${n}×${nc}</i>` + C.map(c => `<span>${N(c)}</span>`).join(''), ' mh')
+    + R.map((x, r) => G(nc, `<span class="nm" style="border-color:${QC(x[0])}">${N(x[0])}</span>` + x[1].map((v, c) => v == null ? '<i class="ch no"></i>'
+      : CH('v' + r + '.' + c, 0, v[0] ?? v, sv == r + '.' + c, v[1] ? '<i class="tg">♪</i>' : '')).join(''), '')).join('');
+  // звук; при видео со звуком внутри — пустые слоты без тапа (итог и так пишет «со звуком»)
+  if (Z.length) h += G(Z.length, '<span class="nm">ЗВУК</span>'
+    + Z.map((x, i) => m ? `<div class="ch no"><b>${N(x[0])}</b></div>` : CH('a' + i, N(x[0]), x[1], sa == i, '')).join(''), ' sr');
   // итог: что выбрано и сколько весит (если размеры известны)
-  const v = cell(s, sv), mx = Array.isArray(v), a = sa >= 0 && !mx && Z[sa], [r, c] = sv.split('.');
-  const t = [sv && R[r][0] + ' ' + C[c] + (mx ? ' со звуком' : a ? '' : ' без звука'), a && a[0]].filter(Boolean).join(' + ');
-  const vm = sv ? +(mx ? v[0] : v) : 0, am = a ? a[1] : 0;
-  h += `<div class="sm">${t ? N(t) + ((!sv || vm) && (!a || am) ? ' ≈ ' + MB(vm + am) : '') : 'ВЫБЕРИ ФОРМАТ'}</div>`;
-  if (s.y) h += CL(`<span class="lb">✂️ Вырезать рекламу</span><span class="bd s${sb}">${sb ? 'ДА' : 'НЕТ'}</span>`, CW(1), 0, 0, 's');
-  return h + SG([CL('<b>СКАЧАТЬ</b>', CW(2), 1, t, 'g'), CL('<b>СБРОС</b>', CW(2), 1, 0, 'c')]);
+  const a = Z[sa], [r, c] = sv.split('.');
+  const t = [sv && R[r][0] + ' ' + C[c] + (m ? ' со звуком' : a ? '' : ' без звука'), a && a[0]].filter(Boolean).join(' + ');
+  const vm = sv ? +(m ? v[0] : v) : 0, am = a ? a[1] : 0, z = (!sv || vm) && (!a || am) ? MB(vm + am) : '';
+  // ширина рамки «Скачать» (вёрстку она не задаёт: на широком Desktop #ac не шире 420 px и прижат вправо)
+  const w = Math.min(Wd, 420) - 48;
+  h += `<div class="sm">${t ? N(t) + (z ? ' ≈ ' + z : '') : 'ВЫБЕРИ ФОРМАТ'}</div>`;
+  if (s.y) h += `<div class="sw${sb ? ' on' : ''}" data-k="s"><div class="sl">ВЫРЕЗАТЬ РЕКЛАМУ<i class="u">SPONSORBLOCK · СЕГМЕНТЫ</i></div>`
+    + `<i class="u">${sb ? 'ВКЛ' : 'ВЫКЛ'}</i><div class="tr"><svg viewBox="0 0 44 20"><path d="M0.5 0.5H43.5V14.5L38.5 19.5H0.5Z"/></svg><i></i></div></div>`;
+  return h + `<div id="ac"><div class="dl${t && !busy ? ' on' : ''}" data-k="g"><i class="gl"></i>`
+    // рамка — inline-SVG в точных пикселях (clip-path в песочнице запрещён): скоба слева, ступенька сверху,
+    // срезанный нижний правый угол; только прямые отрезки — разборщик SVG в Telegram самодельный
+    + `<svg class="fr" viewBox="0 0 ${w} 40" preserveAspectRatio="none"><path class="b" d="M0 1h4v38h-4v-9.5l2-2v-15l-2-2z"/><path d="M7.5 1.5h${w * .3 | 0}l4 4H${w - 1.5}V30.5l-8 8H7.5z"/></svg>`
+    + `<b>${busy ? 'ЗАПРОС…' : 'СКАЧАТЬ' + (t && z ? ' · ' + z : '')}</b><i class="u">REQ ${RQ() || '—'}</i></div>`
+    + `<div class="x${t ? ' on' : ''}" data-k="c"><svg viewBox="0 0 40 40"><path d="M0.5 0.5H39.5V39.5H0.5Z"/><path class="o" d="M0.5 7V0.5H7M33 0.5H39.5V7M39.5 33V39.5H33M7 39.5H0.5V33"/>`
+    + '<path class="c" d="M15 15L25 25M25 15L15 25"/></svg></div></div>' + (note ? `<div class="m"><b>!</b>${N(note)}</div>` : '');
 }
-
-// Сегменты шкалы одним градиентом с явными точками: 6 px заливки, 2 px зазора
-const SEG = (() => {
-  const z = 'rgba(14,14,23,0)', d = '#0e0e17', g = [];
-  for (let i = 0; i < 480; i += 8) g.push(`${z} ${i}px`, `${z} ${i + 6}px`, `${d} ${i + 6}px`, `${d} ${i + 8}px`);
-  return `linear-gradient(90deg,${g})`;
-})();
-const show = (id, on) => { $(id).style.display = on ? 'block' : 'none' };
 
 // Глитч, как переход вкладок в /panel: пять кадров по 40 мс, в каждом строка может пропасть,
 // сдвинуться и перекраситься. Копий нет — только visibility, left и цвет.
@@ -148,62 +193,24 @@ const show = (id, on) => { $(id).style.display = on ? 'block' : 'none' };
 // а тап внутри такого слоя не находит ячейку (position:relative) и достаётся самой строке без data-k
 function GZ() {
   let n = 5, r = Math.random;
-  clearInterval(GZ.t);
   const f = () => {
     for (let d = app.firstChild; d; d = d.nextSibling) {
       d.style.visibility = n && r() * 6 < n ? 'hidden' : '';
       d.style.left = n && r() < .5 ? (r() * 40 - 20 | 0) + 'px' : '';
       d.classList.toggle('gz', !!n && r() < .5);
     }
-    n-- || clearInterval(GZ.t);
-  };
-  f(); GZ.t = setInterval(f, 40);
-}
-
-// Ход скачивания: разметка создаётся один раз, дальше меняются только тексты,
-// ширина и цвет — так ширина плавно доезжает (transition), а анимации не перезапускаются
-function job(s) {
-  if (md != 'job') {
-    md = 'job'; lB = lF = st = '';
-    app.innerHTML = HD('ЗАГРУЗКА', '<span class="bd" id="sp"></span>') + '<div class="lb" id="jl"></div>'
-      + '<div class="c" id="jc"><span id="jcf"></span><span id="jt"></span></div>'
-      + `<div class="c" id="jb" style="height:30px">${FR(Wd, 30, 0)}<div class="tk" id="jr"><span class="ib"></span><span class="sg" id="g1"></span></div>`
-      + '<div class="tk" id="jk"><div id="jf"><span class="sw"></span><span class="sg" id="g2"></span></div></div></div>'
-      + '<div class="m" id="jd"></div><div id="ja"></div><div class="m" id="jn"></div>';
-    $('g1').style.backgroundImage = $('g2').style.backgroundImage = SEG;
-  }
-  // k — этап для бейджа и скобы статуса: 0 стоп, 1 готово, 2 в работе, 3 ошибка.
-  // статус бот присылает заглавными, без эмодзи и «— 45%» (этап — бейджем, процент — в шапке)
-  const p = s.p, k = s.k == 'e' ? 3 : s.k == 'ok' ? 1 : p == null ? 0 : 2, b = JSON.stringify(s.b),
-    t = s.t || '';
-  $('sp').className = 'bd s' + k;
-  $('sp').textContent = ['СТОП', 'ГОТОВО', { v: 'ВИДЕО', a: 'АУДИО' }[s.w] || 'В РАБОТЕ', 'ОШИБКА'][k];
-  $('pc').textContent = p >= 0 ? (p | 0) + '%' : '';
-  $('jl').textContent = s.l || '';
-  $('jt').textContent = t;
-  $('jc').className = 'c s' + k;
-  // рамку статуса — под его высоту (текст бывает в две строки)
-  const f = Wd + 'x' + $('jc').offsetHeight;
-  if (f != lF) { lF = f; $('jcf').innerHTML = FR(Wd, $('jc').offsetHeight || 34, 0) }
-  show('jb', p != null); show('jr', p < 0); show('jk', p >= 0);
-  // видео красное, звук циановый — как прокси и VPN в панели
-  if (p >= 0) { $('jf').style.width = Math.min(100, p) + '%'; $('jf').style.background = s.w == 'a' ? '#5ef6ff' : '#f75049' }
-  $('jd').textContent = s.d || '';
-  // кнопки пересоздаём только при изменении — не сбивать нажатие
-  if (b != lB) { lB = b; $('ja').innerHTML = s.b ? SG(s.b.map((x, i) => CL(`<b>${N(x[0])}</b>`, CW(s.b.length), 1, 0, 'b' + i))) : '' }
-  $('jn').className = note == '⏳' ? 'm' : 'm e';
-  $('jn').textContent = note;
-  if (st != k + t) { st = k + t; GZ() }
+    n-- || clearInterval(t);
+  }, t = setInterval(f, 40);
+  f();
 }
 
 function draw() {
   Wd = app.offsetWidth || Wd;
-  const s = S();
-  if (s.s == 'job') return job(s);
-  const g = md != 'pick';
-  md = 'pick';
-  app.innerHTML = pick(s) + (note ? `<div class="m${note == '⏳' ? '' : ' e'}">${esc(note)}</div>` : '');
-  // появление с глитчем — при первом показе и при возврате к выбору после скачивания
+  const s = S(), g = md != s.s;
+  md = s.s;
+  // не выбор (сессия истекла) — только текст бота, без кнопок
+  app.innerHTML = s.s == 'pick' ? pick(s) : HD('') + `<div class="sm">${N(s.t)}</div>`;
+  // появление с глитчем — при первом показе и при смене вида
   if (g) GZ();
 }
 
@@ -212,12 +219,10 @@ function draw() {
 const F = {
   v: setV, q: k => setV(k, 1),
   // у видео со звуком внутри отдельный звук не выбирается — итог и так пишет «со звуком»
-  a: i => { Array.isArray(cell(S(), sv)) || (sa = sa == i ? -1 : i); draw() },
-  // кнопка хода скачивания: запрос берём из состояния по индексу, а не вписываем в атрибут
-  b: i => ask(S().b[i][1]),
+  a: i => { cell(S(), sv)?.[1] || (sa = sa == i ? -1 : +i); draw() },
   s: () => { sb = 1 - sb; try { localStorage.sb = sb } catch (e) {} draw() },
   // пока ничего не выбрано, «Скачать» молчит: итог над кнопками и так просит выбрать
-  g: () => (sv || sa >= 0) && ask('g:' + sv + ':' + (sa < 0 ? '' : sa) + ':' + sb),
+  g: () => { const q = RQ(); q && ask(q) },
   c: () => { sv = ''; sa = -1; draw() }
 };
 document.addEventListener('click', e => {

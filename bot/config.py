@@ -35,3 +35,5 @@ USE_WIDGETS = os.environ.get("USE_WIDGETS", "1") != "0"
 # Прогресс скачивания виджетом (плавная полоска, «Отменить») вместо текстового сообщения.
 # WIDGET_PROGRESS=0 — прогресс текстом. Без Bot API 10.4 — текстом автоматически.
 WIDGET_PROGRESS = os.environ.get("WIDGET_PROGRESS", "1") != "0"
+# Короткое имя сервера для мелкого текста в виджете хода скачивания («SID 3EA10699 · ANN»). Пусто — «NODE».
+NODE_NAME = os.environ.get("NODE_NAME", "").strip().upper()[:12]

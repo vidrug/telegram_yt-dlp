@@ -37,7 +37,7 @@ from bot.cookies import (
     save_user_cookies,
     validate_cookie_file,
 )
-from bot.downloader import progress_text, safe_edit
+from bot.downloader import POSTPROCESSOR_STAGES, progress_text, safe_edit
 from bot.formats import (
     build_format_keyboard,
     build_raw_format_table,
@@ -505,6 +505,10 @@ class TextUI(SerialUI):
         await self._progress(lambda: safe_edit(self.msg, progress_text(d)))
 
     async def on_stage(self, text: str) -> None:
+        # поиск рекламных вставок идёт до скачивания — прогресс после него показываем дальше
+        if text == POSTPROCESSOR_STAGES["SponsorBlock"]:
+            await self._progress(lambda: safe_edit(self.msg, text))
+            return
         await self._step(lambda: safe_edit(self.msg, text))
 
     async def sending(self) -> None:

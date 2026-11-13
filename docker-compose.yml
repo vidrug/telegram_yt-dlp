@@ -21,6 +21,7 @@ services:
       EXTERNAL_URL: ${EXTERNAL_URL}
       USE_WIDGETS: ${USE_WIDGETS:-1}  # 0 — первый экран кнопками, а не виджетом выбора формата
       WIDGET_PROGRESS: ${WIDGET_PROGRESS:-1}  # 0 — прогресс скачивания текстом, а не виджетом
+      NODE_NAME: ${NODE_NAME:-}  # имя сервера мелким текстом в виджете прогресса
       PANEL_URL: http://host.docker.internal:1080
       OWNER_ID: ${OWNER_ID:-}  # пусто — команды владельца (прокси/VPN) отключены
       PANEL_TOKEN: ${PANEL_TOKEN:-}

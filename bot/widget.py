@@ -35,9 +35,9 @@ from aiogram.methods.base import TelegramMethod
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 
 from bot.callbacks import ClassicCallback, RawFormatsCallback
-from bot.config import MAX_CONCURRENT_PER_USER, SHARED_DIR, USE_WIDGETS, WIDGET_PROGRESS, log
+from bot.config import MAX_CONCURRENT_PER_USER, NODE_NAME, SHARED_DIR, USE_WIDGETS, WIDGET_PROGRESS, log
 from bot.cookies import is_youtube
-from bot.downloader import progress_info, progress_track
+from bot.downloader import POSTPROCESSOR_STAGES, _format_eta, progress_info, progress_track
 from bot import fulltable
 from bot.formats import CODEC_ORDER, codec_name, fmt_bytes, format_filesize, pair_selector, video_quality
 from bot.jobs import SerialUI, cookie_prompt, run_download
@@ -579,24 +579,43 @@ async def send_picker(chat_id: int, sid: str, s: dict) -> bool:
 # Ход скачивания в виджете
 # ---------------------------------------------------------------------------
 
+def _card(sid: str, sponsorblock: bool) -> dict[str, Any]:
+    """Постоянные поля «карточки данных» (bot/widget_job.html): код сессии, метка рекламы, узел."""
+    card: dict[str, Any] = {"i": sid}
+    if sponsorblock:
+        card["a"] = 1  # «БЕЗ РЕКЛАМЫ» — меткой, а не хвостом подписи
+    if NODE_NAME:
+        card["h"] = NODE_NAME
+    return card
+
+
 class WidgetUI(SerialUI):
-    """Ход скачивания в отдельном виджете (bot/widget_job.html).
+    """Ход скачивания в отдельном виджете (bot/widget_job.html, «карточка данных»).
 
     Формат выбирают в сообщении выше — в первом экране, в «Все форматы» или кнопками, —
     там же можно выбрать другой. После отправки файла виджет удаляется, как раньше
     удалялось текстовое сообщение о прогрессе.
+
+    Кроме статуса и процента бот шлёт числа для строк и мелких кодов карточки:
+    z — [скачано Б, всего Б, скорость Б/с, «м:сс» осталось], на склейке и отправке — итог по всем
+    дорожкам [всего, всего, средняя скорость, ""]; g — этап 0 старт, 1 видео, 2 звук, 3 склейка,
+    4 отправка; f — форматы дорожек («248+251»), x — сайт, i — код сессии, a — вырезается реклама.
     """
 
-    def __init__(self, chat_id: int, message_id: int, label: str, sponsorblock: bool) -> None:
+    def __init__(self, chat_id: int, message_id: int, label: str, sponsorblock: bool, sid: str) -> None:
         super().__init__()
         self.chat_id = chat_id
         self.message_id = message_id
-        self.label = label + (" · ✂️ без рекламы" if sponsorblock else "")
+        self.label = label
+        self.card = _card(sid, sponsorblock)
+        self.tracks: dict[str, list[int]] = {}  # дорожка (format_id) -> [скачано, всего]
+        self.site = ""
+        self.speeds: list[int] = []  # скорости из сообщений yt-dlp — для средней в итоге
 
     def _job(self, t: str, p: float | None = None, d: str | None = None,
              b: tuple[tuple[str, str], ...] = (), k: str | None = None,
-             w: str = "") -> Callable[[], Awaitable[None]]:
-        state: dict[str, Any] = {"s": "job", "l": self.label, "t": t}
+             w: str = "", g: int | None = None, z: list | None = None) -> Callable[[], Awaitable[None]]:
+        state: dict[str, Any] = {"s": "job", "l": self.label, "t": t, **self.card}
         if p is not None:
             state["p"] = round(p, 1)
         if w:
@@ -607,22 +626,61 @@ class WidgetUI(SerialUI):
             state["b"] = [list(x) for x in b]
         if k:
             state["k"] = k
+        if g is not None:
+            state["g"] = g
+        if z is not None:
+            state["z"] = z
+        if self.tracks:
+            state["f"] = "+".join(self.tracks)
+        if self.site:
+            state["x"] = self.site
         return lambda: set_state(self.chat_id, self.message_id, state)
 
+    def _total(self, final: bool) -> list | None:
+        """Итог по дорожкам: на склейке и отправке всё уже скачано, при отмене — сколько успели.
+
+        С текстом d (ошибка, ссылка на большой файл) z не шлём: карточка показывает текст только без z,
+        а последние числа помнит сама.
+        """
+        if not self.tracks:
+            return None
+        total = sum(t or n for n, t in self.tracks.values())
+        got = sum(n for n, _ in self.tracks.values())
+        speed = sum(self.speeds) // len(self.speeds) if self.speeds else 0
+        return [total, total, speed, ""] if final else [got, total, 0, ""]
+
     async def start(self) -> None:
-        await self._progress(self._job("⏳ Подготовка…", -1, b=(("Отменить", "x"),)))
+        await self._progress(self._job("⏳ Подготовка…", -1, b=(("Отменить", "x"),), g=0))
 
     async def on_progress(self, d: dict) -> None:
+        info = d.get("info_dict") or {}
+        done = int(d.get("downloaded_bytes") or 0)
+        total = int(d.get("total_bytes") or d.get("total_bytes_estimate") or 0)
+        if total:
+            total = max(total, done)
+        self.tracks[str(info.get("format_id") or "?")] = [done, total]
+        self.site = self.site or str(info.get("extractor_key") or info.get("extractor") or "").lower()[:12]
+        speed = int(d.get("speed") or 0)
+        if speed:
+            self.speeds.append(speed)
         title, pct, details = progress_info(d)
+        w = progress_track(d)
+        eta = d.get("eta")
+        z = [done, total, speed, _format_eta(eta) if eta else ""]
         await self._progress(self._job(title, -1 if pct is None else pct, details,
-                                       b=(("Отменить", "x"),), w=progress_track(d)))
+                                       b=(("Отменить", "x"),), w=w, g=2 if w == "a" else 1, z=z))
 
     async def on_stage(self, text: str) -> None:
-        # ffmpeg не прервать — кнопки «Отменить» на этом этапе нет
-        await self._step(self._job(text, -1))
+        # Поиск рекламных вставок идёт до скачивания: это ещё старт, и прогресс скачивания после него
+        # показывается дальше (_progress, а не _step — иначе полоса замерла бы на поиске до склейки)
+        if text == POSTPROCESSOR_STAGES["SponsorBlock"]:
+            await self._progress(self._job(text, -1, b=(("Отменить", "x"),), g=0))
+            return
+        # склейка, вырезание и исправления — после скачивания; ffmpeg не прервать, «Отменить» нет
+        await self._step(self._job(text, -1, g=3, z=self._total(True)))
 
     async def sending(self) -> None:
-        await self._step(self._job("📤 Отправляю в Telegram…", -1))
+        await self._step(self._job("📤 Отправляю в Telegram…", -1, g=4, z=self._total(True)))
 
     async def delivered(self) -> None:
         async def remove() -> None:
@@ -644,7 +702,8 @@ class WidgetUI(SerialUI):
         )
 
     async def missing_file(self) -> None:
-        await self._step(self._job("❌ Файл не найден после скачивания", k="e", b=(("Повторить", "r"),)))
+        await self._step(self._job("❌ Файл не найден после скачивания", k="e", b=(("Повторить", "r"),),
+                                   z=self._total(False)))
 
     async def failed(self, error: Exception, resumable: bool) -> None:
         text = str(error).removeprefix("ERROR: ")[:160]
@@ -660,7 +719,7 @@ class WidgetUI(SerialUI):
         await bot.send_message(self.chat_id, cookie_prompt(user_id, url), disable_web_page_preview=True)
 
     async def cancelled(self) -> None:
-        await self._step(self._job("⏹ Скачивание отменено", b=(("Скачать заново", "r"),)))
+        await self._step(self._job("⏹ Скачивание отменено", b=(("Скачать заново", "r"),), z=self._total(False)))
 
 
 async def start_progress(
@@ -670,8 +729,8 @@ async def start_progress(
     """Показать прогресс виджетом и начать скачивание. False — показать прогресс текстом."""
     if not (available and WIDGET_PROGRESS):
         return False
-    first = {"s": "job", "l": label + (" · ✂️ без рекламы" if sponsorblock else ""),
-             "t": _status("⏳ Подготовка…"), "p": -1, "b": [["Отменить", "x"]]}
+    first = {"s": "job", "l": label, "t": _status("⏳ Подготовка…"), "p": -1, "b": [["Отменить", "x"]],
+             "g": 0, **_card(sid, sponsorblock)}
     try:
         msg = await bot(SendWidget(
             chat_id=chat_id, html=JOB_HTML, chat_data=_dump(first),
@@ -700,7 +759,7 @@ def _start_job(chat_id: int, message_id: int, sid: str, s: dict, user_id: int) -
     sel = s["wsel"][message_id]
     cancel = threading.Event()
     s["job"] = cancel
-    ui = WidgetUI(chat_id, message_id, sel["label"], sel["sb"])
+    ui = WidgetUI(chat_id, message_id, sel["label"], sel["sb"], sid)
 
     async def runner() -> None:
         try:

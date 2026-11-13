@@ -5,6 +5,8 @@
   Тапом выбирается по одному видео и звуку (повторный снимает), выбранная плитка — заливка 40% и яркий контур.
   Не влезает на экран — секция листается (◀ 1/4 ▶): страницы бот отдаёт в ответах на запросы p:<v|a>:<n>.
   «Скачать» шлёт f:<номер видео>:<номер звука>:<sb>, ход скачивания бот показывает отдельным виджетом.
+  Три общих элемента — как на первом экране (bot/widget.html): «Вырезать рекламу» — строка с переключателем,
+  «Скачать» — жёлтая главная кнопка, ✕ — квадратная иконка.
   chat_data (см. full_state в bot/widget.py):
     {"s": "full", "c": [видео, звук] — сколько всего, "n": [страниц], "p": [плиток на странице],
      "v": [[id, качество, кодек, МБ, 1 — звук внутри], ...], "a": [[id, звук, язык, МБ], ...], "y": 1}
@@ -18,7 +20,7 @@ body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 syste
 #app,#app>*{position:relative}
 #h{display:flex;align-items:flex-end;justify-content:space-between;padding-bottom:6px;border-bottom:1px solid var(--l)}
 #tt{font:500 25px/1.1 system-ui}
-#h small,.lab,.sm,.tg,.c b,.tag{letter-spacing:.05em}
+#h small,.lab,.sm,.tag{letter-spacing:.05em}
 #h small{font-size:12px;color:var(--h)}
 /* легенда «редкости» */
 .lg{display:flex;gap:10px;margin-top:7px;font:600 11px/1 system-ui;color:var(--h)}
@@ -47,19 +49,42 @@ body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 syste
 .z{color:var(--c);font:700 13px/1 system-ui}
 .tag{font:700 10px/1 system-ui;color:var(--y);border:1px solid var(--y);padding:2px 3px 1px}
 .sm{margin:9px 0 6px;color:var(--w);font-weight:600;font-size:13px}
-/* кнопка-фильтр «Вырезать рекламу»: включена — заливка, как у выбранной ячейки */
-.tg{height:34px;display:flex;align-items:center;gap:9px;padding:3px 12px 0 16px;font:600 12.5px system-ui;color:var(--c)}
-.tg span{flex:1}
-.tg b{font-size:11px;color:var(--h)}
-.tg.on{color:var(--w)}
-.tg.on b{color:#1ded83}
-.a{display:grid;grid-template-columns:3fr 1fr;gap:4px;margin-top:6px}
-.a .c{height:38px;display:flex;align-items:center;justify-content:center;padding-top:3px}
-.c b{color:var(--c);font:700 14px system-ui}
-/* «Скачать» с выбором — сплошной красный блок со свечением и тёмным текстом (Drop Point, нажатие-вспышка) */
-.rd{box-shadow:0 0 14px rgba(247,80,73,.55)}
-.rd>.fr{fill:var(--r);stroke:var(--r)}
-.rd b{color:#0e0e17}
+/* Переключатель, «Скачать» и ✕ — как на первом экране (bot/widget.html), те же размеры, цвета и состояния.
+   Шрифт строки переключателя и пары кнопок — как у тела первого экрана: микротекст наследует ту же разрядку 0.65px */
+.sw,#ac{font:600 13px/1 system-ui;letter-spacing:.05em}
+/* микротекст: служебные коды и мелкая печать */
+.u{font:600 8px/1.25 system-ui;color:var(--l);white-space:nowrap}
+.tr,.dl,.x{position:relative}
+.tr svg,.x svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(--l)}
+/* «Вырезать рекламу» — строка без рамки с настоящим переключателем: угловатая дорожка и ползунок */
+.sw{display:flex;align-items:center;gap:8px;padding:6px 0;border:solid rgba(247,80,73,.2);border-width:1px 0}
+.sl{flex:1;color:var(--w)}
+.sl .u{display:block;margin-top:4px}
+.tr{width:44px;height:20px}
+.tr i{position:absolute;left:4px;top:4px;width:16px;height:12px;background:var(--l)}
+.sw.on svg{fill:rgba(29,237,131,.16);stroke:#1ded83}
+.sw.on .tr i{left:24px;background:#1ded83}
+.sw.on>.u{color:#1ded83}
+/* «Скачать» — главная: сплошной жёлтый, тёмный текст, свечение; без выбора и пока идёт запрос «Скачать» — тёмная
+   с жёлтым контуром. Свечение — тень вложенного блока по корпусу кнопки. Внизу слева — код запроса мелким текстом.
+   На широком Desktop пара кнопок не шире 420 px и прижата вправо */
+#ac{display:flex;gap:8px;margin:8px 0 0 auto;max-width:420px}
+.dl{flex:1;z-index:0;height:40px;display:flex;align-items:center;justify-content:center;padding-bottom:5px}
+.gl{position:absolute;left:8px;top:6px;width:calc(100% - 10px);height:32px;z-index:-1}
+.on .gl{box-shadow:0 0 14px rgba(240,181,55,.45)}
+.dl .fr{fill:#0e0e17;stroke:rgba(240,181,55,.45)}
+.dl .b{fill:rgba(240,181,55,.45)}
+.dl b{color:rgba(240,181,55,.55);font:700 14px/1 system-ui;letter-spacing:.08em}
+.dl .u{position:absolute;left:14px;bottom:4px;color:rgba(240,181,55,.45)}
+.dl.on .fr,.dl.on .b{fill:var(--y);stroke:var(--y)}
+.dl.on b{color:#0e0e17}
+.dl.on .u{color:rgba(14,14,23,.6)}
+/* ✕ — квадратная иконка: волосяной контур, уголки, крест из двух линий; горит, только когда есть что сбросить */
+.x{width:40px;height:40px}
+.x svg{stroke:rgba(247,80,73,.22)}
+.x .cr{stroke:var(--l);stroke-width:1.6}
+.x.on .o{stroke:var(--h)}
+.x.on .cr{stroke:var(--c)}
 .m{color:var(--y);font-size:13px;margin-top:5px}
 .gz{color:#5ef6ff;--r:#5ef6ff;--l:#5ef6ff;--h:#5ef6ff;--c:#f0b537;--w:#f0b537}
 </style>
@@ -79,12 +104,13 @@ const J = s => { try { return eval('(' + s + ')') || {} } catch (e) { return {} 
 const load = () => { D = J(W.chatData); P = { v: [D.v], a: [D.a] }; pg = { v: 0, a: 0 } };
 const K = t => t == 'v' ? 0 : 1;
 
-// Запрос к боту — строго синхронно в обработчике тапа (правило песочницы); ok — что сделать с ответом
+// Запрос к боту — строго синхронно в обработчике тапа (правило песочницы); ok — что сделать с ответом.
+// busy — строка запроса в пути: пока идёт «Скачать» (f:…), кнопка тёмная и пишет «ЗАПРОС…», как на первом экране
 function ask(d, ok) {
   if (busy) return;
   let p;
   try { p = W.request(d) } catch (e) { return say(e.message) }
-  busy = 1; say('⏳');
+  busy = d; say('⏳');
   p.then(a => { const r = J(a.result); note = r.e || ''; r.e || !ok || ok(r) },
     e => { note = e.code == 'RATE_LIMITED' ? 'Подожди пару секунд' : e.code })
     .finally(() => { busy = 0; draw() });
@@ -104,14 +130,17 @@ function tv(g) { SV = row('v', g); sv = sv == g ? -1 : g; if (sv >= 0 && SV[4]) 
 function ta(g) { if (sv < 0 || !SV[4]) { SA = row('a', g); sa = sa == g ? -1 : g } draw() }
 function clr() { sv = sa = -1; draw() }
 function tsb() { sb = 1 - sb; try { localStorage.sb = sb } catch (e) {} draw() }
-function dl() { (sv >= 0 || sa >= 0) && ask('f:' + (sv < 0 ? '' : sv) + ':' + (sa < 0 ? '' : sa) + ':' + sb) }
+// запрос «Скачать»: f:<номер видео>:<номер звука>:<sb>; ничего не выбрано — запроса нет (код — микротекстом на кнопке)
+const RQ = () => (sv >= 0 || sa >= 0) && 'f:' + (sv < 0 ? '' : sv) + ':' + (sa < 0 ? '' : sa) + ':' + sb;
+function dl() { const q = RQ(); q && ask(q) }
 
 const MB = x => !x ? '?' : x >= 1024 ? (x / 1024).toFixed(1) + 'G' : (x < 10 ? +x.toFixed(1) : Math.round(x)) + 'M';
 // Рамки — inline-SVG в точных пикселях, как FR() в панели (clip-path в песочнице запрещён).
-// s — левый край: 0 скоба с вырезом, 1 сплошная полоса редкости (цвет — переменная --a ячейки); k — ступенька кнопки
+// s — левый край: 0 скоба с вырезом, 1 сплошная полоса редкости (цвет — переменная --a ячейки);
+// k — кнопка «Скачать»: ступенька сверху и срез угла 8 вместо 7, как на первом экране
 const FR = (w, h, k, s) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path class="b" d="M0 1h4v' + (h - 2)
   + (s ? 'h-4z' : 'h-4v-' + (h / 4 - .5) + 'l2-2v-' + (h / 2 - 5) + 'l-2-2z') + '"/><path d="M7.5 1.5' + (k ? 'h' + (w * .3 | 0) + 'l4 4' : '')
-  + 'H' + (w - 1.5) + 'V' + (h - 8.5) + 'l-7 7H7.5z"/></svg>';
+  + 'H' + (w - 1.5) + 'V' + (h - 8.5 - k) + 'l-' + (7 + k) + ' ' + (7 + k) + 'H7.5z"/></svg>';
 const CL = (x, w, h, k, c, f, s) => `<div class="c ${c}" data-k="${f}"${s || ''}>${FR(w, h, k, s)}${x}</div>`;
 // «Редкость»: видео — по качеству, звук — по кодеку
 const RV = q => (h => h >= 2160 ? '#f0b537' : h >= 1440 ? '#9d2bf5' : h >= 1080 ? '#2f7fff' : h >= 720 ? '#1ded83' : '#6c6876')(parseInt(q) || 0);
@@ -160,9 +189,16 @@ function draw() {
   if (D.c[0]) h += '<div class="lg">' + [['#f0b537', '4K'], ['#9d2bf5', '2K'], ['#2f7fff', '1080'], ['#1ded83', '720'], ['#6c6876', 'SD']]
     .map(x => `<span><i style="background:${x[0]}"></i>${x[1]}</span>`).join('') + '</div>';
   h += sec('v', 'ВИДЕО') + sec('a', 'ЗВУК') + `<div class="sm">${t ? N(t) : 'ВЫБЕРИ ВИДЕО И ЗВУК'}</div>`;
-  if (D.y) h += CL(`✂<span>ВЫРЕЗАТЬ РЕКЛАМУ</span><b>${sb ? 'ВКЛ' : 'ВЫКЛ'}</b>`, Wd, 34, 1, 'tg' + (sb ? ' on' : ''), 's');
-  app.innerHTML = h + '<div class="a">' + CL(`<b>СКАЧАТЬ${t && z ? ' · ' + z : ''}</b>`, (Wd - 4) * .75, 38, 1, t ? 'rd' : '', 'g')
-    + CL('<b>✕</b>', (Wd - 4) / 4, 38, 1, '', 'c') + '</div>' + (note ? `<div class="m">${esc(note)}</div>` : '');
+  // «Вырезать рекламу», «Скачать» и ✕ — та же разметка, что на первом экране (bot/widget.html)
+  if (D.y) h += `<div class="sw${sb ? ' on' : ''}" data-k="s"><div class="sl">ВЫРЕЗАТЬ РЕКЛАМУ<i class="u">SPONSORBLOCK · СЕГМЕНТЫ</i></div>`
+    + `<i class="u">${sb ? 'ВКЛ' : 'ВЫКЛ'}</i><div class="tr"><svg viewBox="0 0 44 20"><path d="M0.5 0.5H43.5V14.5L38.5 19.5H0.5Z"/></svg><i></i></div></div>`;
+  // w — ширина рамки «Скачать»: пара кнопок не шире 420 px, минус ✕ и зазор; q — «Скачать» ждёт ответа бота
+  const w = Math.min(Wd, 420) - 48, q = busy[0] == 'f';
+  app.innerHTML = h + `<div id="ac"><div class="dl${t && !q ? ' on' : ''}" data-k="g"><i class="gl"></i>`
+    // рамка: скоба слева, ступенька сверху, срезанный нижний правый угол
+    + FR(w, 40, 1) + `<b>${q ? 'ЗАПРОС…' : 'СКАЧАТЬ' + (t && z ? ' · ' + z : '')}</b><i class="u">REQ ${RQ() || '—'}</i></div>`
+    + `<div class="x${t ? ' on' : ''}" data-k="c"><svg viewBox="0 0 40 40"><path d="M0.5 0.5H39.5V39.5H0.5Z"/><path class="o" d="M0.5 7V0.5H7M33 0.5H39.5V7M39.5 33V39.5H33M7 39.5H0.5V33"/>`
+    + '<path class="cr" d="M15 15L25 25M25 15L15 25"/></svg></div></div>' + (note ? `<div class="m">${esc(note)}</div>` : '');
   if (first) { first = 0; GZ() }
 }
 

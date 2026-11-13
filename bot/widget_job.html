@@ -1,163 +1,220 @@
 <!--
-  Виджет хода скачивания (Bot API 10.4) — отдельное сообщение под выбором формата.
-  Бот присылает его после «Скачать» в первом экране, в «Все форматы» и при выборе кнопками,
-  и удаляет после отправки файла. HTML отправленного виджета изменить нельзя, поэтому он —
-  тонкий рендерер: тексты, этапы и кнопки присылает бот в chat_data (см. WidgetUI в bot/widget.py):
-    {"s": "job", "l": что качаем, "t": статус (заглавными, без эмодзи), "k": "e"|"ok",
-     "p": % (-1 — этап без процента), "w": "v"|"a", "d": детали, "b": [[текст, запрос], ...]}
-  Лимит: 4096 байт после zlib -9; комментарии и отступы бот вырезает перед отправкой (_load_html).
-  Оформление — как у панели /panel: формы интерфейса Cyberpunk 2077, палитра из UI-гайда игры.
+  Ход скачивания — отдельный виджет (Bot API 10.4), вариант B «карточка данных», версия 2.
+  HTML отправленного виджета не меняется: всё, что показано, приходит от бота в chat_data
+  {"s":"job","l":что качаем,"t":статус,"k":"e"|"ok","p":% (-1 — этап без процента, нет — стоп),
+   "w":"v"|"a","d":детали,"b":[[текст,запрос],...]}
+  и необязательные поля (их добавит бот; без них виджет тоже работает):
+   "z":[скачано Б, всего Б, скорость Б/с, "м:сс" осталось] — числа строк ПОТОК и мелких кодов; на склейке,
+       отправке и в готовом — итог по всем дорожкам: [всего Б, всего Б, средняя скорость, ""];
+   "g":0..4 — этап линейки (старт, видео, звук, склейка, отправка; «готово» виджет ставит сам по "k");
+   "a":1 — реклама вырезается (метка «БЕЗ РЕКЛАМЫ»; хвост «· ✂️ без рекламы» в "l" тогда не нужен);
+   "i":"3ea10699" код сессии, "f":"248+251" форматы, "x":"youtube" экстрактор, "h":"ann-hp" узел.
+  Без "z" строки показывают «--», а "d" выводится текстом в секции ФАЙЛ; без "g" линейка не подсвечена;
+  без i/f/x/h коды — заглушки LOCAL / AUTO / NET / NODE. Последние числа виджет помнит: на ошибке и отмене
+  строки и коды показывают то, что успело скачаться.
+  Форма — экран-сводка Cyberpunk 2077 (стиль, без текстов и знаков игры): панель с корешком слева, засечкой
+  на нём и срезанным углом, номерные метки, секции с подписью, тонкой линией и служебным кодом справа,
+  полоса с линейкой делений, мелкий текст и процент в уголках-скобах (как на экране загрузки), строки атрибутов
+  с шестигранниками и крупными циановыми числами с пунктиром до края, штрихкод из данных сессии, кнопки как
+  GO BACK / COMPLETE с буквой запроса в кружке. Сообщение (ошибка, ссылка, ответ на запрос) — абзацем с чертой
+  цвета исхода вместо штрихкода.
+  Движение: полоса едет 2,8 с, процент досчитывает до нового значения вместе с ней; хвосты «##» у кодов и
+  строки шума в шапке мерцают. Один таймер на 90 мс меняет только текст (transform/opacity из JS не трогаются:
+  Telegram Desktop сделал бы элемент слоем, и тапы мимо). В готовом, ошибке и отмене ничего не мерцает;
+  при reduce-motion нет таймера и бегунка.
+  Подписи кнопок — постоянные строки бота, поэтому вставляются без экранирования.
+  Лимит: 4096 байт после zlib -9. Минификатор бота не переименовывает имена, поэтому они короткие,
+  а пояснения — в комментариях (их бот вырезает).
 -->
 <style>
-*{box-sizing:border-box}
-body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 system-ui;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537}
-/* красное свечение шапки — отдельным слоем, а не фоном body: фон body движок повторяет, если блок выше содержимого */
-#gw{position:absolute;top:0;left:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
-/* строки — position:relative: глитч сдвигает их через left, а кнопки внутри числятся за своей строкой */
-#app,#app>*{position:relative}
-.s0{--y:var(--l)}.s1{--y:#1ded83}.s3{--y:#f75049}
-#tt,.bd,.c b,#jt{letter-spacing:.05em}
-#h{display:flex;align-items:center;gap:8px;padding-bottom:7px;margin-bottom:8px;border-bottom:1px solid var(--l)}
-#hl{flex:1;white-space:nowrap}
-#tt,#pc{font:500 25px/1.1 system-ui}
-#pc{color:var(--c)}
-.bd{display:inline-block;border:1px solid var(--y);color:var(--y);font:600 12px/1 system-ui;padding:3px 5px 3px 6px;white-space:nowrap}
-#sp{position:relative;top:-4px;margin-left:8px}
-/* ячейка: слева «скоба» цвета строки, контур со срезанным нижним правым углом; кнопка — плюс ступенька сверху */
-.c{position:relative;z-index:0;display:flex;align-items:center;gap:8px;min-width:0;padding:0 14px 0 17px;margin-bottom:4px}
-.gr{display:grid;gap:4px;margin:8px 0}
-.gr .c{margin:0;justify-content:center;padding:3px 4px 0 11px}
-.fr{position:absolute;left:0;top:0;width:100%;height:100%;z-index:-1;fill:rgba(247,80,73,.08);stroke:var(--l)}
-.fr .b{fill:var(--r);stroke:none}
-#jc .b{fill:var(--y)}
-.c b{color:var(--c);font:600 13px/1 system-ui}
-.lb{color:var(--c);font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#jl{margin-bottom:8px}
-#jc{min-height:34px;padding:6px 14px 6px 17px}
-#jt{color:var(--w);font-weight:600;font-size:14px}
-.m{color:var(--h);font-size:13px}
-#jd{margin-top:4px}
-.e{color:var(--y)}
-/* полоска: сегменты, как у шкал в игре; по заливке бежит блик. Родной рендерер Telegram не анимирует
-   background-position и не повторяет плитку — движение только transform в CSS-анимации, сегменты — градиент из JS (SEG).
-   Слои с анимацией не мешают тапам: кнопок внутри полоски нет */
-.tk{position:absolute;top:8px;left:15px;width:calc(100% - 31px);height:calc(100% - 16px);overflow:hidden;pointer-events:none}
-#jf{position:relative;width:0;height:100%;overflow:hidden;background:#f75049;transition:width 2.8s linear}
-.sw,.sg,.ib{position:absolute;top:0;left:0;height:100%}
-.sw{width:100%;background:linear-gradient(90deg,rgba(255,255,255,0) 30%,rgba(255,255,255,.5) 50%,rgba(255,255,255,0) 70%);animation:sw 1.6s linear infinite}
-@keyframes sw{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
-.sg{width:100vw}
-/* этапы без процента: жёлтый блок ездит по тусклой шкале */
-#jr{background:rgba(240,181,55,.12)}
-.ib{width:30%;background:#f0b537;animation:ib 1.4s linear infinite}
-@keyframes ib{from{transform:translateX(-100%)}to{transform:translateX(334%)}}
-/* кадр глитча: строка перекрашивается в циан с жёлтым (как переход вкладок в /panel) */
-.gz{color:#5ef6ff;--r:#5ef6ff;--l:#5ef6ff;--h:#5ef6ff;--c:#f0b537;--w:#f0b537}
+*{box-sizing:border-box;margin:0;padding:0;font-style:normal}
+body{padding:6px 8px;background:#0e0e17;color:#f75049;font:13px/1.3 system-ui;--r:#f75049;--d:#f7504999;--q:#f7504940;--c:#5ef6ff;--y:#f0b537;--s:var(--r)}
+/* красное свечение сверху — слоем до #A: такой слой не перехватывает тапы */
+#gw{position:absolute;top:0;left:0;width:100%;height:150px;background:linear-gradient(#f7504938,#f7504900)}
+/* строки — position:relative; слева — пунктир края экрана */
+#A,#A>*{position:relative}
+#A{padding-left:7px;border-left:2px dashed var(--q)}
+/* мелкий текст — шрифтом интерфейса; заглавные пишет JS (text-transform в Desktop не трогает кириллицу) */
+pre,h6 i{font:7px/1.2 system-ui;letter-spacing:.08em;color:var(--d);overflow:hidden}
+svg{fill:var(--r)}
+#H,#lb,.P,.R,#bt,.bt,#rl{display:flex;align-items:center;gap:6px}
+/* рамки — inline-SVG под элементом; декор не принимает тапы */
+.F{position:absolute;left:0;top:0;width:100%;height:100%;z-index:-1;fill:#f750490f;stroke:var(--d)}
+#gw,.F,.K,.B i{pointer-events:none}
+/* шапка: значок с квадратами этапов (сеткой, без flex-wrap), четыре строки мелких цифр, статус */
+.I{display:grid;grid-template-columns:6px 6px 6px;gap:3px;width:34px;height:34px;padding:7px 0 0 3px;border:2px solid;border-radius:3px;color:var(--c)}
+.I b{height:6px;border:1px solid}
+.I .d,.I .a{background:currentColor}
+#m{color:var(--c)}
+#tt{flex:1;font:500 18px/1.1 system-ui;font-size:min(5vw,22px);letter-spacing:.05em;color:var(--c)}
+/* линейка этапов: будущие бледные, пройденные красные, текущий — толстый циановый (в итоге — цвета исхода) */
+#rl{gap:3px;margin:5px 0 4px;color:#f7504966}
+#rl p{flex:1;overflow:hidden;font:8px/1 system-ui;border-top:1px solid;padding-top:4px}
+#rl .a{border-top-width:3px;padding-top:2px}
+.d{color:var(--d)}.a{color:var(--c)}.k1 .a,.k3 .a{color:var(--s)}
+/* что качаем и жёлтая метка «без рекламы» (вместо цветного ✂️) */
+#lb{margin-bottom:5px}
+#l{flex:1}
+#sb{display:none;padding:2px 4px 1px;border:1px solid;color:var(--y);font:600 9px/1 system-ui}
+.sb #sb{display:block}
+/* цвет исхода (--s): видео красное, звук циан, готово зелёное, ошибка жёлтая, стоп тусклый; статус — в полную силу */
+.wa{--s:var(--c)}.k0{--s:var(--d)}.k1{--s:#1ded83}.k3{--s:var(--y)}
+.B,.Q,.k1 #tt,.k3 #tt{color:var(--s)}
+/* панель: корешок (засечка и линия — в рамке), срез, номерные метки 1 и 2 */
+#P{z-index:0;padding:2px 8px 6px 23px;overflow:hidden;background:linear-gradient(90deg,#f7504929 15px,#0000 15px)}
+.K{position:absolute;left:3px;top:16px;padding:0 2px;background:var(--q);font:700 7px/10px system-ui}
+.K+.K{left:auto;right:4px;top:7px}
+/* секция: подпись обычным начертанием, тонкая линия, служебный код под линией справа */
+h6{position:relative;font:11px/1 system-ui;letter-spacing:.08em;padding:5px 0 2px;border-bottom:1px solid var(--q);margin-bottom:9px}
+h6 i{position:absolute;right:0;top:20px}
+/* полоса: тонкая, остаток тёмно-красный; этап без процента — жёлтый блок ездит */
+.B{position:relative;height:6px;background:var(--q);overflow:hidden}
+#f{height:100%;width:0;background:currentColor;transition:width 2.8s linear}
+.n #f{transition:none}
+.B i{display:none;position:absolute;height:100%;width:30%;background:var(--y);animation:b 1.4s linear infinite}
+.pm .B i{display:block}
+@keyframes b{from{transform:translateX(-100%)}to{transform:translateX(334%)}}
+.T{display:flex;justify-content:space-between;margin-top:2px}
+.T i{width:1px;height:2px;background:var(--d)}
+.T i:nth-child(5n+1){height:5px}
+/* под полосой, как на экране загрузки: слева мелкий текст, справа процент в уголках-скобах —
+   целая часть крупно и тонко (не <b>: у litehtml b{font-weight:bold}), дробь мелко */
+.P{align-items:start;margin-top:3px}
+#fp{flex:1}
+.Q{position:relative;z-index:0;width:88px;padding:3px 6px 2px;text-align:center;font:200 29px/1 system-ui;white-space:nowrap}
+.Q small{font-size:13px}
+.Q .F{fill:none;stroke:currentColor}
+/* поток: строки атрибутов — шестигранник с разрывами по бокам, крупное циановое число, единица и подпись,
+   пунктир до правого края */
+.R{height:18px;margin-bottom:2px;white-space:nowrap;color:var(--c)}
+.R svg{width:18px;height:20px}
+.R path+path{fill:none;stroke:var(--r);stroke-width:1.3}
+.R b{font:500 16px/1 system-ui}
+.R small{flex:1;font-size:11px;border-bottom:1px dotted var(--q)}
+/* файл: штрихкод на всю ширину (SVG в обычном блоке, width:100%), цифры под ним;
+   сообщение — абзацем с чертой цвета исхода вместо штрихкода (адреса переносятся где угодно) */
+#bw svg{width:100%;height:16px;fill:var(--d)}
+#dt{display:none;padding:1px 0 1px 7px;border-left:2px solid var(--s);color:#ece9e6;font-size:11px;overflow-wrap:anywhere}
+.x #dt{display:block}
+.x #bw,.x #rf{display:none}
+/* кнопки как GO BACK / COMPLETE: одна — во всю ширину, из двух первая справа; в работе тусклые, в итоге
+   первая яркая; буква запроса в кружке; ряд есть всегда (высота не прыгает) */
+#bt{margin-top:6px;min-height:34px}
+.bt{position:relative;z-index:0;height:34px;justify-content:center;color:var(--c);font:600 12px/1 system-ui;letter-spacing:.05em;white-space:nowrap}
+.p .F{fill:#f750494d;stroke:var(--r)}
+.bt b{width:16px;height:16px;border:1.5px solid;border-radius:50%;font-size:9px;line-height:13px;text-align:center}
+.w .bt{color:var(--d)}
 </style>
 <div id="gw"></div>
-<div id="app"></div>
+<div id="A"></div>
 <script>
-const W = window.TelegramWidget, $ = i => document.getElementById(i), app = $('app');
-// lB, lF, st — что уже нарисовано: кнопки, рамка статуса, этап (для глитча)
-let note = '', busy = 0, Wd = 336, lB, lF, st;
-const N = s => String(s ?? '').replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';').toUpperCase();
-// Данные — разбором JS, а не JSON.parse: в Telegram Desktop JSON.parse читает числа с русской запятой,
-// [7,1] становится [7.1, 1], а 1.4 — 1. Бот присылает чистый JSON, он же — литерал JS
-const J = s => { try { return eval('(' + s + ')') || {} } catch (e) { return {} } }, S = () => J(W.chatData);
+// Имена: W — API виджета, $ — элемент по id, A — корень, S() — состояние (разбор через eval: в Telegram
+// Desktop JSON.parse портит числа), Z(v,n) — n последних цифр с нулями, Q — 9 цифр с точками («012.976.128»),
+// SC — заголовок секции с местом под служебный код, F — inline-SVG с путём в точных пикселях
+// (preserveAspectRatio="none": если ширина уже другая — растягивается, а не съезжает)
+const W = TelegramWidget, $ = i => document.getElementById(i), A = $('A'),
+  J = s => { try { return eval('(' + s + ')') || {} } catch (e) { return {} } }, S = () => J(W.chatData),
+  Z = (v, n) => String(Math.round(v) || 0).padStart(n, 0).slice(-n),
+  Q = v => Z(v, 9).replace(/(\d{3})(?=\d)/g, '$1.'),
+  SC = (t, i) => `<h6>${t}<i id="c${i}"></i></h6>`,
+  F = (w, h, d, c = 'F') => `<svg class="${c}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${d}"/></svg>`,
+  // V — текстовые поля, T пишет текст только при изменении, заглавными (text-transform в Desktop не трогает
+  // кириллицу). T(id, текст) — как есть; T(id, шаблон, z) — мелкий код: # — случайная цифра, z — вероятность
+  // мигнуть шумом за тик. Сообщение бота (# в адресе) идёт мимо T, в #dt как есть
+  V = {}, X = v => v.replace(/#/g, () => Math.random() * 10 | 0),
+  T = (i, v, z) => { const o = V[i] || (V[i] = { e: $(i) }); v = (v + '').toUpperCase(); o.z = z; if (o.v != v) o.e.textContent = z == null ? o.v = v : X(o.v = v) },
+  // процент: показанное значение PV идёт от PF к PT за 2,8 с — вместе с полосой
+  U = () => { T('pi', PV < 0 ? '--' : PV | 0); T('pd', (PV < 0 ? '' : '.' + (PV * 10 | 0) % 10) + '%') };
+// RM — reduce-motion; NT — подпись ответа на запрос; BZ — запрос в пути; K — исход; G — этап;
+// LP, LZ — последние процент и числа; LB, LF, LS — что уже нарисовано (кнопки, рамка, штрихкод)
+let RM, NT, BZ, K = 0, G = -1, LP = -1, LZ = [0, 0, 0], PV, PF, PT, PZ = 0, LB, LF, LS;
+try { RM = matchMedia('(prefers-reduced-motion:reduce)').matches } catch (e) {}
 
-// Запрос к боту — строго синхронно в обработчике тапа (правило песочницы)
-function ask(d) {
-  if (busy) return;
-  let p;
-  try { p = W.request(d) } catch (e) { note = e.message; return draw() }
-  busy = 1; note = '⏳'; draw();
-  p.then(a => { note = J(a.result).e || '' },
-    e => { note = e.code == 'RATE_LIMITED' ? 'Подожди пару секунд' : e.code })
-    .finally(() => { busy = 0; draw() });
-}
+// Разметка — один раз; дальше меняются только тексты, классы и пути
+A.innerHTML = `<div id="H"><p class="I">${'012345'.replace(/\d/g, '<b id="o$&"></b>')}</p><pre id="m"></pre><b id="tt"></b></div><div id="rl">`
+  + 'СТАРТ ВИДЕО ЗВУК СКЛЕЙКА ОТПРАВКА ГОТОВО'.split(' ').map((x, i) => `<p id="r${i}">${x}</p>`).join('') + '</div><p id="lb"><span id="l"></span><i id="sb">БЕЗ РЕКЛАМЫ</i></p>'
+  + `<div id="P"><i id="pf"></i><b class="K">1</b><b class="K">2</b>`
+  + SC('ПРОГРЕСС', 0) + `<div class="B"><i></i><p id="f"></p></div><p class="T">${'<i></i>'.repeat(21)}</p>`
+  // мелкий текст и процент в уголках-скобах
+  + '<div class="P"><pre id="fp"></pre><p class="Q">'
+  + F(88, 34, 'M1.5 8V1.5H8m72 0h6.5V8m0 18v6.5H80M8 32.5H1.5V26') + '<i id="pi"></i><small id="pd"></small></p></div>'
+  // иконки строк — шестигранник с разрывами по бокам и знак: размер (стопка), скорость (шевроны), остаток (часы)
+  + SC('ПОТОК', 1) + [['MB РАЗМЕР', 'M6 7h8v2H6zm0 3h8v2H6zm0 3h8v2H6z'], ['MB/S СКОРОСТЬ', 'M5 7l3 4-3 4zm5 0l3 4-3 4z'], ['ОСТАЛОСЬ', 'M6 6h8l-4 5 4 5H6l4-5z']].map(([t, d], i) =>
+    `<p class="R"><svg viewBox="0 0 20 22"><path d="${d}"/><path d="M2 9V5.5L10 1l8 4.5V9M2 13v3.5l8 4.5 8-4.5V13"/></svg><b id="v${i}"></b><small>${t}</small></p>`).join('')
+  + SC('ФАЙЛ', 2) + '<p id="bw"></p><pre id="rf"></pre><p id="dt"></p></div><div id="bt"></div>';
 
-// Рамки — inline-SVG в точных пикселях, как FR() в панели: clip-path в песочнице запрещён.
-// Только прямые отрезки — разборщик SVG в Telegram самодельный.
-const FR = (w, h, k) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path class="b" d="M0 1h4v' + (h - 2)
-  + 'h-4v-' + (h / 4 - .5) + 'l2-2v-' + (h / 2 - 5) + 'l-2-2z"/><path d="M7.5 1.5' + (k ? 'h' + (w * .3 | 0) + 'l4 4' : '')
-  + 'H' + (w - 1.5) + 'V' + (h - 9.5) + 'l-8 8H7.5z"/></svg>';
-// кнопка: рамка со ступенькой; CW(n) — ширина, когда их n в ряду
-const CW = n => (Wd + 4) / n - 4;
-const BT = (x, n, i) => `<div class="c" style="height:34px" data-k="${i}">${FR(CW(n), 34, 1)}<b>${x}</b></div>`;
+// Запрос к боту — строго синхронно в обработчике тапа; пока ответ в пути, тапы молча игнорируются
+// (кнопки тускнеют), на частые Telegram отвечает RATE_LIMITED — «подожди»
+const ask = d => {
+  if (BZ) return;
+  try { W.request(d).then(a => { NT = J(a.result).e || '' }, e => { NT = e.code == 'RATE_LIMITED' ? 'ПОДОЖДИ' : e.code }).finally(() => { BZ = 0; D() }); BZ = 1 } catch (e) { NT = e.message }
+  D();
+};
 
-// Сегменты шкалы одним градиентом с явными точками: 6 px заливки, 2 px зазора
-const SEG = (() => {
-  const z = 'rgba(14,14,23,0)', d = '#0e0e17', g = [];
-  for (let i = 0; i < 480; i += 8) g.push(`${z} ${i}px`, `${z} ${i + 6}px`, `${d} ${i + 6}px`, `${d} ${i + 8}px`);
-  return `linear-gradient(90deg,${g})`;
-})();
-const show = (id, on) => { $(id).style.display = on ? 'block' : 'none' };
+function D() {
+  const s = S(), p = s.p, t = s.t || '', l = s.l || '', au = s.w == 'a', b = s.b || [], n = b.length,
+    // k — исход: 3 ошибка, 1 готово, 0 стоп (процента нет), 2 в работе
+    k = s.k == 'e' ? 3 : s.k == 'ok' ? 1 : p == null ? 0 : 2,
+    // g — этап (сегмент линейки) — от бота; в ошибке и стопе остаётся тем, где остановились
+    g = k == 1 ? 5 : s.g ?? G,
+    // числа: из "z", иначе последние известные (на этапе 0 — нули); "d" без "z" и ответ на запрос — текстом
+    z = s.z || (g ? LZ : [0, 0, 0]), [dl, tl, sp] = z, e = s.z && z[3], d = NT || (s.z ? '' : s.d || ''),
+    v = k == 1 ? 100 : p < 0 ? -1 : p >= 0 ? LP = p : LP, f = b => (b / 2 ** 20).toFixed(1),
+    id = s.i || 'LOCAL', fi = s.f || 'AUTO', xs = s.x || 'NET', q = l.split(/ \+ | · /),
+    // строка служебных кодов под штрихкодом (с мерцающим хвостом)
+    rf = `REF ${fi} ${id} ${Z(dl, 9)} ${Z(tl, 9)} ${xs} ##`;
+  // процент досчитывает только в работе (и до этого тоже в работе) без смены этапа; иначе встаёт сразу
+  RM || v < 0 || g != G || k - 2 || K - 2 ? PF = PT = PV = v : v != PT && (PF = PV, PT = v, PZ = Date.now());
+  K = k; LZ = z;
+  // смена этапа (и первый показ): полоса прыгает без перехода — звук начинается с нуля
+  A.className = 'k' + k + (au ? ' wa' : '') + (p < 0 && !RM ? ' pm' : '') + (g != G ? ' n' : '') + (s.a ? ' sb' : '') + (d ? ' x' : '') + (BZ ? ' w' : '');
+  G = g;
+  for (let i = 0; i < 6; i++) $('r' + i).className = $('o' + i).className = i < g ? 'd' : i - g ? '' : k ? 'a' : 'd';
+  $('f').style.width = (v > 0 ? v : 0) + '%';
+  $('dt').textContent = d;
+  U();
+  // тексты: статус, подпись, строки атрибутов; затем слой мелких деталей — настоящие числа (КиБ, байты,
+  // форматы, сессия, узел), где их нет — шум
+  [['tt', t], ['l', l],
+    ['v0', tl ? f(dl) + '/' + f(tl) : dl ? f(dl) : '--'], ['v1', sp ? f(sp) : '--'], ['v2', e || '--:--'],
+    ['m', [dl, tl, sp, 0].map(v => v ? Z(v / 1024, 7) : '#######').join('\n'), .5],
+    ['c0', '||| ' + Q(dl), 0], ['c1', 'LINK ' + Q(sp) + ' B/S ##', .3], ['c2', 'FMT ' + fi, 0],
+    ['fp', `SID ${id} · ${s.h || 'NODE'}\n${q[0]}\n${q[1] || xs}`, 0], ['rf', rf, .3]
+  ].map(a => T(...a));
 
-// Глитч при смене этапа, как переход вкладок в /panel: пять кадров по 40 мс, строка может пропасть,
-// сдвинуться и перекраситься. Сдвиг — left, не transform: строку, которой скрипт три кадра подряд
-// меняет transform, Telegram Desktop делает слоем, и тап по кнопке внутри него не находит цель
-function GZ() {
-  let n = 5, r = Math.random;
-  clearInterval(GZ.t);
-  const f = () => {
-    for (let d = app.firstChild; d; d = d.nextSibling) {
-      d.style.visibility = n && r() * 6 < n ? 'hidden' : '';
-      d.style.left = n && r() < .5 ? (r() * 40 - 20 | 0) + 'px' : '';
-      d.classList.toggle('gz', !!n && r() < .5);
-    }
-    n-- || clearInterval(GZ.t);
-  };
-  f(); GZ.t = setInterval(f, 40);
-}
-
-// Разметка создаётся один раз, дальше меняются только тексты, ширина и цвет —
-// так ширина плавно доезжает (transition), а анимации не перезапускаются
-app.innerHTML = '<div id="h"><div id="hl"><span id="tt">ЗАГРУЗКА</span><span class="bd" id="sp"></span></div><span id="pc"></span></div>'
-  + '<div class="lb" id="jl"></div><div class="c" id="jc"><span id="jcf"></span><span id="jt"></span></div>'
-  + '<div class="c" id="jb" style="height:30px"><span id="jbf"></span><div class="tk" id="jr"><span class="ib"></span><span class="sg" id="g1"></span></div>'
-  + '<div class="tk" id="jk"><div id="jf"><span class="sw"></span><span class="sg" id="g2"></span></div></div></div>'
-  + '<div class="m" id="jd"></div><div id="ja"></div><div class="m" id="jn"></div>';
-$('g1').style.backgroundImage = $('g2').style.backgroundImage = SEG;
-
-function draw() {
-  Wd = app.offsetWidth || Wd;
-  const s = S();
-  // k — этап для бейджа и скобы статуса: 0 стоп, 1 готово, 2 в работе, 3 ошибка.
-  // Статус бот присылает заглавными, без эмодзи и «— 45%» (этап — бейджем, процент — в шапке)
-  const p = s.p, k = s.k == 'e' ? 3 : s.k == 'ok' ? 1 : p == null ? 0 : 2, b = JSON.stringify(s.b), t = s.t || '';
-  $('sp').className = 'bd s' + k;
-  $('sp').textContent = ['СТОП', 'ГОТОВО', { v: 'ВИДЕО', a: 'АУДИО' }[s.w] || 'В РАБОТЕ', 'ОШИБКА'][k];
-  $('pc').textContent = p >= 0 ? (p | 0) + '%' : '';
-  $('jl').textContent = s.l || '';
-  $('jt').textContent = t;
-  $('jc').className = 'c s' + k;
-  // рамки — под ширину и высоту (статус бывает в две строки)
-  const f = Wd + 'x' + $('jc').offsetHeight;
-  if (f != lF) { lF = f; $('jcf').innerHTML = FR(Wd, $('jc').offsetHeight || 34, 0); $('jbf').innerHTML = FR(Wd, 30, 0) }
-  show('jb', p != null); show('jr', p < 0); show('jk', p >= 0);
-  // видео красное, звук циановый — как прокси и VPN в панели
-  if (p >= 0) { $('jf').style.width = Math.min(100, p) + '%'; $('jf').style.background = s.w == 'a' ? '#5ef6ff' : '#f75049' }
-  $('jd').textContent = s.d || '';
-  // кнопки пересоздаём только при изменении — не сбивать нажатие
-  if (b != lB) {
-    lB = b;
-    $('ja').innerHTML = s.b ? `<div class="gr" style="grid-template-columns:${'1fr '.repeat(s.b.length)}">`
-      + s.b.map((x, i) => BT(N(x[0]), s.b.length, 'b' + i)).join('') + '</div>' : '';
+  // размеры: панель, ряд кнопок; ширина кнопки — весь ряд или половина
+  const P = $('P'), w = P.offsetWidth, h = P.offsetHeight, FW = $('bt').offsetWidth || 300, c = n > 1 ? (FW - 6) / 2 : FW, bk = b + FW + k;
+  // штрихкод — из кода сессии и форматов (ГПСЧ от них): единица — 2 px ширины панели, штрихи в 1–2 единицы,
+  // зазоры не уже единицы, несколько высоких опорных; перерисовывается при смене кода или ширины
+  if (id + fi + w != LS) {
+    let r = parseInt(id + fi, 36) | 1, y = '', x = 0, u = w / 2 - 16 | 0, q;
+    for (LS = id + fi + w; x < u; x += q + 1 + (r >>> 29 & 1)) r = Math.imul(r, 69069) + 1, q = 1 + (r >>> 31), y += `M${x} ${x % 40 < 3 ? 0 : 3}h${q}v13h-${q}z`;
+    $('bw').innerHTML = F(u, 16, y, '');
   }
-  $('jn').className = note == '⏳' ? 'm' : 'm e';
-  $('jn').textContent = note;
-  if (st != k + t) { st = k + t; GZ() }
+  // рамка панели — в точных пикселях (clip-path запрещён): ступенька над корешком, линия корешка с засечкой,
+  // срез угла; контуры отступают от края на 1,5 px (Telegram обрезает обводку на краю SVG); перерисовка —
+  // только при смене размера
+  if (w + ' ' + h != LF) LF = w + ' ' + h, $('pf').innerHTML = F(w, h, `M1.5 9.5H10l6-7H${w - 1.5}V${h - 12.5}l-11 11H1.5zM15.5 9.5V${h - 1.5}M4 ${h >> 1}.5h8`);
+  // кнопки пересоздаём только при изменении (набора, ширины или исхода); первая — справа
+  if (bk != LB) LB = bk, $('bt').innerHTML = b.map((x, i) => `<div class="bt${k - 2 && !i ? ' p' : ''}" style="width:${c}px" data-k="b${i}">${F(c, 34, `M1.5 1.5H${c - 1.5}V24.5l-8 8H1.5z`)}<b>${x[1][0].toUpperCase()}</b>${x[0].toUpperCase()}</div>`).reverse().join('');
 }
 
-// Тапы — один обработчик на документ, как в /panel: идём вверх до элемента с data-k.
-// Кнопка хода скачивания: запрос берём из состояния по индексу, а не вписываем в атрибут
+// Тапы — один обработчик на документ: inline onclick Telegram Desktop не вызывает
 document.addEventListener('click', e => {
   let t = e.target, k;
   while (t && !(k = t.getAttribute && t.getAttribute('data-k'))) t = t.parentNode;
-  const b = k && (S().b || [])[k.slice(1)];
-  b && ask(b[1]);
+  const x = k && (S().b || [])[k.slice(1)];
+  x && ask(x[1]);
 });
-W.onEvent('chatDataChanged', () => { note = ''; draw() });
-draw();
+W.onEvent('chatDataChanged', () => { NT = ''; D() });
+D();
+// ширина пузыря меняется (поворот телефона, окно Desktop) — рамки и кнопки перерисовываются
+try { new ResizeObserver(D).observe(A) } catch (e) {}
+// Один таймер: досчёт процента и мерцание шаблонов (только текст), лишь в работе (k=2).
+// Вне экрана Telegram зовёт его не чаще раза в секунду
+RM || setInterval(() => {
+  K == 2 && (PV = PF + (PT - PF) * Math.min(1, (Date.now() - PZ) / 2800), U());
+  for (const i in V) { const o = V[i]; if (K == 2 && Math.random() < o.z) o.e.textContent = X(o.v) }
+}, 90);
 W.ready();
 </script>
