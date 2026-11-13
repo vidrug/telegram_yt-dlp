@@ -12,7 +12,7 @@
 -->
 <style>
 *{box-sizing:border-box}
-body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:600 13px/1 system-ui;letter-spacing:.05em;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537;--g:#1ded83}
+body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:600 13px/1 system-ui;letter-spacing:.05em;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537;--g:#1ded83;--a:#fcee0a}
 /* красное свечение шапки — отдельным слоем перед #app: в hit-test он ниже строк и тапы не забирает */
 #gw{position:absolute;left:0;top:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
 /* строки экрана и всё, что нажимается, — position:relative: глитч сдвигает строки через left, а ячейки внутри числятся за своей строкой */
@@ -76,12 +76,13 @@ svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(-
 #ac{display:flex;gap:8px;margin:8px 0 0 auto;max-width:420px}
 .dl{flex:1;z-index:0;height:40px;display:flex;align-items:center;justify-content:center;padding-bottom:5px}
 .gl{position:absolute;left:8px;top:6px;width:calc(100% - 10px);height:32px;z-index:-1}
-.on .gl{box-shadow:0 0 14px rgba(240,181,55,.45)}
-.fr{z-index:-1;fill:#0e0e17;stroke:rgba(240,181,55,.45)}
-.fr .b{fill:rgba(240,181,55,.45);stroke:none}
-.dl b{color:rgba(240,181,55,.55);font:700 14px/1 system-ui;letter-spacing:.08em}
-.dl .u{position:absolute;left:14px;bottom:4px;color:rgba(240,181,55,.45)}
-.on .fr,.on .b{fill:var(--y);stroke:var(--y)}
+/* «Скачать» — кислотный жёлтый игры #fcee0a (янтарный --y остаётся у золота 4K и меток) */
+.on .gl{box-shadow:0 0 14px rgba(252,238,10,.45)}
+.fr{z-index:-1;fill:#0e0e17;stroke:rgba(252,238,10,.45)}
+.fr .b{fill:rgba(252,238,10,.45);stroke:none}
+.dl b{color:rgba(252,238,10,.55);font:700 14px/1 system-ui;letter-spacing:.08em}
+.dl .u{position:absolute;left:14px;bottom:4px;color:rgba(252,238,10,.45)}
+.on .fr,.on .b{fill:var(--a);stroke:var(--a)}
 .dl.on b{color:#0e0e17}
 .dl.on .u{color:rgba(14,14,23,.6)}
 /* ✕ — квадратная иконка: волосяной контур, уголки, крест из двух линий; горит, только когда есть что сбросить */
