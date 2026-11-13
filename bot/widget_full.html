@@ -55,15 +55,16 @@ body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 syste
 /* микротекст: служебные коды и мелкая печать */
 .u{font:600 8px/1.25 system-ui;color:var(--l);white-space:nowrap}
 .tr,.dl,.x{position:relative}
-.tr svg,.x svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(--l)}
+.x svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(--l)}
 /* «Вырезать рекламу» — строка без рамки с настоящим переключателем: угловатая дорожка и ползунок */
 .sw{display:flex;align-items:center;gap:8px;padding:6px 0;border:solid rgba(247,80,73,.2);border-width:1px 0}
 .sl{flex:1;color:var(--w)}
 .sl .u{display:block;margin-top:4px}
-.tr{width:44px;height:20px}
-.tr i{position:absolute;left:4px;top:4px;width:16px;height:12px;background:var(--l)}
-.sw.on svg{fill:rgba(29,237,131,.16);stroke:#1ded83}
-.sw.on .tr i{left:24px;background:#1ded83}
+/* дорожка — CSS-рамка, ползунок — flex по центру: как на первом экране */
+.tr{width:44px;height:20px;display:flex;align-items:center;padding:0 3px;border:1px solid var(--l)}
+.tr i{width:16px;height:12px;background:var(--l)}
+.sw.on .tr{justify-content:flex-end;border-color:#1ded83;background:rgba(29,237,131,.16)}
+.sw.on .tr i{background:#1ded83}
 .sw.on>.u{color:#1ded83}
 /* «Скачать» — главная: сплошной жёлтый, тёмный текст, свечение; без выбора и пока идёт запрос «Скачать» — тёмная
    с жёлтым контуром. Свечение — тень вложенного блока по корпусу кнопки. Внизу слева — код запроса мелким текстом.
@@ -191,7 +192,7 @@ function draw() {
   h += sec('v', 'ВИДЕО') + sec('a', 'ЗВУК') + `<div class="sm">${t ? N(t) : 'ВЫБЕРИ ВИДЕО И ЗВУК'}</div>`;
   // «Вырезать рекламу», «Скачать» и ✕ — та же разметка, что на первом экране (bot/widget.html)
   if (D.y) h += `<div class="sw${sb ? ' on' : ''}" data-k="s"><div class="sl">ВЫРЕЗАТЬ РЕКЛАМУ<i class="u">SPONSORBLOCK · СЕГМЕНТЫ</i></div>`
-    + `<i class="u">${sb ? 'ВКЛ' : 'ВЫКЛ'}</i><div class="tr"><svg viewBox="0 0 44 20"><path d="M0.5 0.5H43.5V14.5L38.5 19.5H0.5Z"/></svg><i></i></div></div>`;
+    + `<i class="u">${sb ? 'ВКЛ' : 'ВЫКЛ'}</i><div class="tr"><i></i></div></div>`;
   // w — ширина рамки «Скачать»: пара кнопок не шире 420 px, минус ✕ и зазор; q — «Скачать» ждёт ответа бота
   const w = Math.min(Wd, 420) - 48, q = busy[0] == 'f';
   app.innerHTML = h + `<div id="ac"><div class="dl${t && !q ? ' on' : ''}" data-k="g"><i class="gl"></i>`

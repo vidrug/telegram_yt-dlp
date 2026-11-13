@@ -62,10 +62,12 @@ svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(-
 .sw{display:flex;align-items:center;gap:8px;padding:6px 0;border:solid rgba(247,80,73,.2);border-width:1px 0}
 .sl{flex:1;color:var(--w)}
 .sl .u{display:block;margin-top:4px}
-.tr{width:44px;height:20px}
-.tr i{position:absolute;left:4px;top:4px;width:16px;height:12px;background:var(--l)}
-.sw.on svg{fill:rgba(29,237,131,.16);stroke:var(--g)}
-.sw.on .tr i{left:24px;background:var(--g)}
+/* дорожка — CSS-рамка, а не SVG: контур по половинкам пикселя на масштабе Desktop 125 % двоился;
+   ползунок — flex по центру (абсолютные отступы сажали его на пиксель ниже середины) */
+.tr{width:44px;height:20px;display:flex;align-items:center;padding:0 3px;border:1px solid var(--l)}
+.tr i{width:16px;height:12px;background:var(--l)}
+.sw.on .tr{justify-content:flex-end;border-color:var(--g);background:rgba(29,237,131,.16)}
+.sw.on .tr i{background:var(--g)}
 .sw.on>.u{color:var(--g)}
 /* «Скачать» — главная: сплошной жёлтый, тёмный текст, свечение; без выбора и пока идёт запрос — тёмная с жёлтым контуром.
    Свечение — тень вложенного блока по корпусу кнопки, чтобы ореол шёл вдоль заливки, а не по всей коробке.
@@ -177,7 +179,7 @@ function pick(s) {
   const w = Math.min(Wd, 420) - 48;
   h += `<div class="sm">${t ? N(t) + (z ? ' ≈ ' + z : '') : 'ВЫБЕРИ ФОРМАТ'}</div>`;
   if (s.y) h += `<div class="sw${sb ? ' on' : ''}" data-k="s"><div class="sl">ВЫРЕЗАТЬ РЕКЛАМУ<i class="u">SPONSORBLOCK · СЕГМЕНТЫ</i></div>`
-    + `<i class="u">${sb ? 'ВКЛ' : 'ВЫКЛ'}</i><div class="tr"><svg viewBox="0 0 44 20"><path d="M0.5 0.5H43.5V14.5L38.5 19.5H0.5Z"/></svg><i></i></div></div>`;
+    + `<i class="u">${sb ? 'ВКЛ' : 'ВЫКЛ'}</i><div class="tr"><i></i></div></div>`;
   return h + `<div id="ac"><div class="dl${t && !busy ? ' on' : ''}" data-k="g"><i class="gl"></i>`
     // рамка — inline-SVG в точных пикселях (clip-path в песочнице запрещён): скоба слева, ступенька сверху,
     // срезанный нижний правый угол; только прямые отрезки — разборщик SVG в Telegram самодельный

@@ -36,6 +36,8 @@ body{padding:6px 8px;background:#0e0e17;color:#f75049;font:13px/1.3 system-ui;--
 #A{padding-left:7px;border-left:2px dashed var(--q)}
 /* мелкий текст — шрифтом интерфейса; заглавные пишет JS (text-transform в Desktop не трогает кириллицу) */
 pre,h6 i{font:7px/1.2 system-ui;letter-spacing:.08em;color:var(--d);overflow:hidden}
+/* у <pre> в Telegram своя подложка блока кода — снимаем */
+pre{background:none;border:0;border-radius:0}
 svg{fill:var(--r)}
 #H,#lb,.P,.R,#bt,.bt,#rl{display:flex;align-items:center;gap:6px}
 /* рамки — inline-SVG под элементом; декор не принимает тапы */
@@ -52,10 +54,11 @@ svg{fill:var(--r)}
 #rl p{flex:1;overflow:hidden;font:8px/1 system-ui;border-top:1px solid;padding-top:4px}
 #rl .a{border-top-width:3px;padding-top:2px}
 .d{color:var(--d)}.a{color:var(--c)}.k1 .a,.k3 .a{color:var(--s)}
-/* что качаем и жёлтая метка «без рекламы» (вместо цветного ✂️) */
+/* что качаем и жёлтая метка «без рекламы» (вместо цветного ✂️). У метки обычная высота строки и равные отступы:
+   с line-height:1 Desktop ставит заглавные к низу рамки (13.11) */
 #lb{margin-bottom:5px}
 #l{flex:1}
-#sb{display:none;padding:2px 4px 1px;border:1px solid;color:var(--y);font:600 9px/1 system-ui}
+#sb{display:none;padding:0 4px;border:1px solid;color:var(--y);font:600 9px system-ui}
 .sb #sb{display:block}
 /* цвет исхода (--s): видео красное, звук циан, готово зелёное, ошибка жёлтая, стоп тусклый; статус — в полную силу */
 .wa{--s:var(--c)}.k0{--s:var(--d)}.k1{--s:#1ded83}.k3{--s:var(--y)}
@@ -139,7 +142,7 @@ A.innerHTML = `<div id="H"><p class="I">${'012345'.replace(/\d/g, '<b id="o$&"><
   + '<div class="P"><pre id="fp"></pre><p class="Q">'
   + F(88, 34, 'M1.5 8V1.5H8m72 0h6.5V8m0 18v6.5H80M8 32.5H1.5V26') + '<i id="pi"></i><small id="pd"></small></p></div>'
   // иконки строк — шестигранник с разрывами по бокам и знак: размер (стопка), скорость (шевроны), остаток (часы)
-  + SC('ПОТОК', 1) + [['MB РАЗМЕР', 'M6 7h8v2H6zm0 3h8v2H6zm0 3h8v2H6z'], ['MB/S СКОРОСТЬ', 'M5 7l3 4-3 4zm5 0l3 4-3 4z'], ['ОСТАЛОСЬ', 'M6 6h8l-4 5 4 5H6l4-5z']].map(([t, d], i) =>
+  + SC('ПОТОК', 1) + [['MB РАЗМЕР', 'M6 7h8v2H6zm0 3h8v2H6zm0 3h8v2H6z'], ['MB/S СКОРОСТЬ', 'M6 7l3 4-3 4zm5 0l3 4-3 4z'], ['ОСТАЛОСЬ', 'M6 6h8l-4 5 4 5H6l4-5z']].map(([t, d], i) =>
     `<p class="R"><svg viewBox="0 0 20 22"><path d="${d}"/><path d="M2 9V5.5L10 1l8 4.5V9M2 13v3.5l8 4.5 8-4.5V13"/></svg><b id="v${i}"></b><small>${t}</small></p>`).join('')
   + SC('ФАЙЛ', 2) + '<p id="bw"></p><pre id="rf"></pre><p id="dt"></p></div><div id="bt"></div>';
 
