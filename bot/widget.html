@@ -8,6 +8,7 @@
     быстрый выбор — вкладки с сегментом подчёркивания; ячейки матрицы и звука — чипы: тонкий контур, значение,
     шкала размера внизу, жёлтый ярлык с динамиком (звук внутри), пустой слот пунктиром, выбранный — красная заливка и уголки курсора;
     «Вырезать рекламу» — строка с переключателем; «Скачать» — жёлтая главная кнопка; ✕ — квадратная иконка.
+  Нажатие любого элемента — глитч, как у кнопок на cyberpunk.net: элемент дёргается вбок и через кадр рвётся на полосы.
   Лимит: 4096 байт после zlib -9. Комментарии и отступы бот вырезает перед отправкой (_load_html).
 -->
 <style>
@@ -15,8 +16,11 @@
 body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:600 13px/1 system-ui;letter-spacing:.05em;--r:#f75049;--h:#f75049b2;--l:#f7504961;--c:#5ef6ff;--w:#ece9e6;--y:#f0b537;--g:#1ded83;--a:#fcee0a}
 /* красное свечение шапки — отдельным слоем перед #app: в hit-test он ниже строк и тапы не забирает */
 #gw{position:absolute;left:0;top:0;width:100%;height:140px;background:linear-gradient(#f7504933,#f7504900)}
-/* строки экрана и всё, что нажимается, — position:relative: глитч сдвигает строки через left, а ячейки внутри числятся за своей строкой */
-#app,#app>*,.tb,.ch,.tr,.dl,.x{position:relative}
+/* строки экрана — position:relative: глитч появления сдвигает их через left, а ячейки внутри числятся за своей
+   строкой. Нажимаемое ([data-k]) — тоже: внутри него рамки и полосы глитча (absolute), и у него свой слой наложения
+   (z-index:0) — полосы (z-index:-1) рисуются в нём */
+#app,#app>*{position:relative}
+[data-k]{position:relative;z-index:0}
 /* рамки — inline-SVG поверх всего блока */
 svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(--l)}
 /* микротекст: служебные коды и мелкая печать */
@@ -75,16 +79,14 @@ svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(-
    кольцо (обводка двоилась на масштабе 125 %). У «Скачать» срезан внешний левый верхний угол, у ✕ — внешний
    правый нижний; обращённые друг к другу стороны прямые, у «Скачать» посередине глубокий узкий паз (14×2 px).
    Без выбора «Скачать» тёмная с жёлтой подписью, с выбором — сплошная, подпись чёрная; внизу слева — код запроса.
-   При нажатии — глитч (.gg): заливка рвётся на полосы. Пара не шире 420 px, справа */
+   При нажатии — глитч (.gg, общий для всего нажимаемого — внизу). Пара не шире 420 px, справа */
 #ac{display:flex;gap:8px;margin:8px 0 0 auto;max-width:420px}
-.dl{flex:1;z-index:0;height:40px;display:flex;align-items:center;justify-content:center;padding-bottom:3px}
+.dl{flex:1;height:40px;display:flex;align-items:center;justify-content:center;padding-bottom:3px}
 .fr,.gs{z-index:-1;fill:var(--a);stroke:none}
 .fr .k{fill:#0e0e1799}
 .on .fr .k{fill:var(--a)}
-.gs,.gg .fr{display:none}
-.gg .gs{display:block}
 .dl b{position:relative;color:var(--a);font:700 16px/1 system-ui;letter-spacing:.06em}
-.dl.on b,.gg b{color:#0e0e17}
+.dl.on b{color:#0e0e17}
 /* ✕ — вторая кнопка пары: красная рамка без паза (цвет интерфейса), тусклая, пока сбрасывать нечего; крест — в центре масс кнопки
    (срез правого нижнего угла сдвигает его на полпикселя влево и вверх) */
 .x{width:44px;height:40px}
@@ -97,6 +99,17 @@ svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(-
 .m b{padding:0 5px;margin-right:6px;background:var(--y);color:#0e0e17}
 /* кадр глитча: строка перекрашивается в циан с жёлтым (как переход вкладок в /panel) */
 .gz{color:#5ef6ff;--r:#5ef6ff;--l:#5ef6ff;--h:#5ef6ff;--c:#f0b537;--w:#f0b537}
+/* Нажатие (.gg через кадр) — у всего, что нажимается, как у «Скачать»: рамки, фон и значки пропадают, под тёмной
+   подписью — сдвинутые жёлтые и циановые полосы (GS). #app — чтобы перебить выбранное состояние и цвета кнопок */
+.gs,.gg svg{display:none}
+/* в кадре .gg тап достаётся самому нажимаемому: в Telegram клик есть, только если палец отпущен на том же элементе
+   (или предке/потомке), а полосы подменяют SVG под пальцем — второй быстрый тап (▶▶, снять плитку) терялся.
+   Отдельным правилом: сам [data-k] должен ловить тап, иначе он уйдёт строке без data-k */
+#app .gg *{pointer-events:none}
+/* у строки переключателя подпись начинается от края — полосы левее, чтобы первые буквы не пропадали в просвете */
+.sw .gs{left:-9px}
+#app .gg .gs{display:block;fill:var(--a)}
+#app .gg,#app .gg *{color:#0e0e17;border-color:#0000;background:none}
 </style>
 <div id="gw"></div>
 <div id="app"></div>
@@ -128,9 +141,10 @@ const cell = (s, k) => { const [r, c] = k.split('.'); return k ? s.r[r]?.[1][c] 
 const MB = x => !x ? '?' : x >= 1024 ? (x / 1024).toFixed(1) + 'G' : (x < 10 ? +x.toFixed(1) : Math.round(x)) + 'M';
 // запрос «Скачать»: g:<строка.столбец>:<звук>:<sb>; ничего не выбрано — запроса нет
 const RQ = () => (sv || sa >= 0) && `g:${sv}:${sa < 0 ? '' : sa}:${sb}`;
-// внутренний контур рамки «Скачать» (на 2 px внутрь, против часовой); полосы глитча
+// внутренний контур рамки «Скачать» (на 2 px внутрь, против часовой); GS(w) — полосы глитча нажатия под элементом
+// шириной w px: при точной ширине сдвиги полос — в пикселях элемента, иначе (по умолчанию — ширина чипа) тянутся с ним
 const IN = w => `M10.8 2L2 10.8V38H${w - 2}V23H${w - 16}V17H${w - 2}V2Z`,
-  GS = w => `<svg class="gs" viewBox="0 0 ${w} 40" preserveAspectRatio="none"><path d="M-6 0h${w}v10H-6zM4 20h${w}v10H4z"/>`
+  GS = (w = 70) => `<svg class="gs" viewBox="0 0 ${w} 40" preserveAspectRatio="none"><path d="M-6 0h${w}v10H-6zM4 20h${w}v10H4z"/>`
     + `<path fill="#5ef6ff" d="M8 10h${w}v10H8zM-9 30h${w}v10H-9z"/></svg>`;
 
 // Тап по видео: повторный снимает выбор (f — быстрый выбор, всегда выбирает).
@@ -144,7 +158,7 @@ function setV(k, f) {
 
 // чип: k — тап, t — подпись (у видео — размер), z — размер в МБ, x — ярлык в углу; у выбранного — уголки курсора.
 // Шкала — корень доли от самого большого файла на экране (общая для видео и звука), чтобы и мелкие были видны
-const CH = (k, t, z, on, x) => `<div class="ch${on ? ' on' : ''}" data-k="${k}"><b>${t || MB(z)}</b><i class="t"><i style="width:${Math.sqrt(z / mx) * 100 | 0}%"></i></i>${x}`
+const CH = (k, t, z, on, x) => `<div class="ch${on ? ' on' : ''}" data-k="${k}">${GS()}<b>${t || MB(z)}</b><i class="t"><i style="width:${Math.sqrt(z / mx) * 100 | 0}%"></i></i>${x}`
   + (on ? '<i class="k kl kt"></i><i class="k kr kt"></i><i class="k kl kb"></i><i class="k kr kb"></i>' : '') + '</div>';
 // строка матрицы: подпись (66 px) и n ячеек
 const G = (n, x, c) => `<div class="mr${c}" style="grid-template-columns:66px${' 1fr'.repeat(n)}">${x}</div>`;
@@ -169,7 +183,7 @@ function pick(s) {
   let h = HD(`FMT ${nf}<br>MAX ${MB(mx)}`);
   if (Q.length) h += '<div id="tb">' + Q.map(([r, t]) => {
     const c = R[r][1].findIndex(x => x != null), k = r + '.' + c;
-    return `<div class="tb${k == sv ? ' on' : ''}" data-k="q${k}"><i class="u">${N(R[r][0] + ' ' + C[c])}</i>${t}</div>`;
+    return `<div class="tb${k == sv ? ' on' : ''}" data-k="q${k}">${GS()}<i class="u">${N(R[r][0] + ' ' + C[c])}</i>${t}</div>`;
   }).join('') + '</div>';
   if (n) h += G(nc, `<i class="u">ВИДЕО · ${n}×${nc}</i>` + C.map(c => `<span>${N(c)}</span>`).join(''), ' mh')
     + R.map((x, r) => G(nc, `<span class="nm" style="border-color:${QC(x[0])}">${N(x[0])}</span>` + x[1].map((v, c) => v == null ? '<i class="ch no"></i>'
@@ -184,41 +198,40 @@ function pick(s) {
   // ширина рамки «Скачать» (вёрстку она не задаёт: на широком Desktop #ac не шире 420 px и прижат вправо)
   const w = Math.min(Wd, 420) - 52;
   h += `<div class="sm">${t ? N(t) + (z ? ' ≈ ' + z : '') : 'ВЫБЕРИ ФОРМАТ'}</div>`;
-  if (s.y) h += `<div class="sw${sb ? ' on' : ''}" data-k="s"><div class="sl">ВЫРЕЗАТЬ РЕКЛАМУ<i class="u">SPONSORBLOCK · СЕГМЕНТЫ</i></div>`
+  if (s.y) h += `<div class="sw${sb ? ' on' : ''}" data-k="s">${GS(Wd)}<div class="sl">ВЫРЕЗАТЬ РЕКЛАМУ<i class="u">SPONSORBLOCK · СЕГМЕНТЫ</i></div>`
     + `<i class="u">${sb ? 'ВКЛ' : 'ВЫКЛ'}</i><div class="tr"><i></i></div></div>`;
   return h + `<div id="ac"><div class="dl${t && !busy ? ' on' : ''}" data-k="g" id="dl">`
     // рамка — inline-SVG в точных пикселях (clip-path в песочнице запрещён): кольцо = внешний контур по часовой и внутренний против (дырка при любом правиле заливки) + тёмная середина;
     // срезан левый верхний угол, справа паз; только прямые отрезки — разборщик SVG в Telegram самодельный
     + `<svg class="fr" viewBox="0 0 ${w} 40" preserveAspectRatio="none"><path d="M10 0H${w}V19H${w - 14}V21H${w}V40H0V10Z${IN(w)}"/><path class="k" d="${IN(w)}"/></svg>${GS(w)}`
     + `<b>${busy ? 'ЗАПРОС…' : 'СКАЧАТЬ' + (t && z ? ' · ' + z : '')}</b></div>`
-    + `<div class="x${t ? ' on' : ''}" data-k="c"><svg viewBox="0 0 44 40"><path d="M0 0H44V32L36 40H0ZM2 2V38H35.2L42 31.2V2Z"/>`
+    + `<div class="x${t ? ' on' : ''}" data-k="c">${GS(44)}<svg viewBox="0 0 44 40"><path d="M0 0H44V32L36 40H0ZM2 2V38H35.2L42 31.2V2Z"/>`
     + '<path class="c" d="M16.5 14.5L26.5 24.5M26.5 14.5L16.5 24.5"/></svg></div></div>' + (note ? `<div class="m"><b>!</b>${N(note)}</div>` : '');
 }
 
-// Глитч, как переход вкладок в /panel: пять кадров по 40 мс, в каждом строка может пропасть,
+// Глитч, как переход вкладок в /panel: кадры n = 5…0 через 40 мс, в каждом строка может пропасть,
 // сдвинуться и перекраситься. Копий нет — только visibility, left и цвет.
 // Не transform: строку, которой скрипт три кадра подряд меняет transform, Telegram Desktop делает слоем,
 // а тап внутри такого слоя не находит ячейку (position:relative) и достаётся самой строке без data-k
-function GZ() {
-  let n = 5, r = Math.random;
-  const f = () => {
-    for (let d = app.firstChild; d; d = d.nextSibling) {
-      d.style.visibility = n && r() * 6 < n ? 'hidden' : '';
-      d.style.left = n && r() < .5 ? (r() * 40 - 20 | 0) + 'px' : '';
-      d.classList.toggle('gz', !!n && r() < .5);
-    }
-    n-- || clearInterval(t);
-  }, t = setInterval(f, 40);
-  f();
+function GZ(n = 5) {
+  for (let d = app.firstChild, r = Math.random; d; d = d.nextSibling) {
+    d.style.visibility = n && r() * 6 < n ? 'hidden' : '';
+    d.style.left = n && r() < .5 ? (r() * 40 - 20 | 0) + 'px' : '';
+    d.classList.toggle('gz', !!n && r() < .5);
+  }
+  n && setTimeout(() => GZ(n - 1), 40);
 }
 
-// «Скачать» — глитч при нажатии, как у кнопок на cyberpunk.net: шесть кадров по 40 мс через кадр показывают
-// заливку, порванную на сдвинутые жёлтые и циановые полосы (.gg), а кнопка дёргается вбок.
-// Сдвиг — left, не transform: Telegram Desktop сделал бы кнопку слоем, и тапы шли бы мимо
-function GB() {
-  let n = 6;
-  const f = () => { const e = $('dl'); e && (e.classList.toggle('gg', n % 2 > 0), e.style.left = n ? (Math.random() * 12 - 6 | 0) + 'px' : ''); n-- || clearInterval(i) }, i = setInterval(f, 40);
-  f();
+// Нажатие — глитч, как у кнопок на cyberpunk.net, у всего, что нажимается (13.11: «анимация должна быть везде»):
+// кадры n = 6…0 через 40 мс; в нечётных вместо рамки и фона — сдвинутые жёлтые и циановые полосы (.gg), элемент
+// дёргается вбок на d px; n = 0 — всё на место. Элемент ищем по data-k заново каждый кадр: тап перерисовал экран.
+// Рывок — встречными margin (слева d, справа −d: ширина и соседи те же). Не left: в Telegram (litehtml) left
+// у flex- и grid-элементов не работает, двигались бы только блоки. Не transform: Telegram Desktop сделал бы элемент
+// слоем, и тапы шли бы мимо
+function GB(k, n = 6, d = n && Math.random() * 12 - 6 | 0) {
+  const e = document.querySelector(`[data-k="${k}"]`);
+  e && (e.classList.toggle('gg', n % 2 > 0), e.style.margin = `0 ${-d}px 0 ${d}px`);
+  n && setTimeout(() => GB(k, n - 1), 40);
 }
 
 function draw() {
@@ -232,20 +245,20 @@ function draw() {
 }
 
 // Тапы — один обработчик на документ, как в /panel: атрибуты onclick Telegram Desktop не вызывает.
-// data-k: буква — действие, дальше — аргумент
+// data-k: буква — действие, дальше — аргумент; после действия — глитч нажатия (GB)
 const F = {
   v: setV, q: k => setV(k, 1),
   // у видео со звуком внутри отдельный звук не выбирается — итог и так пишет «со звуком»
   a: i => { cell(S(), sv)?.[1] || (sa = sa == i ? -1 : +i); draw() },
   s: () => { sb = 1 - sb; try { localStorage.sb = sb } catch (e) {} draw() },
-  // пока ничего не выбрано, «Скачать» молчит: итог над кнопками и так просит выбрать
-  g: () => { const q = RQ(); q && (ask(q), GB()) },
+  // пока ничего не выбрано, «Скачать» запроса не шлёт (глитч всё равно есть): итог над кнопками и так просит выбрать
+  g: () => { const q = RQ(); q && ask(q) },
   c: () => { sv = ''; sa = -1; draw() }
 };
 document.addEventListener('click', e => {
   let t = e.target, k;
   while (t && !(k = t.getAttribute && t.getAttribute('data-k'))) t = t.parentNode;
-  k && F[k[0]](k.slice(1));
+  k && (F[k[0]](k.slice(1)), GB(k));
 });
 W.onEvent('chatDataChanged', () => { note = ''; draw() });
 draw();
