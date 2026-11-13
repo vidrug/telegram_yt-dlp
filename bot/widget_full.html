@@ -14,8 +14,8 @@
 -->
 <style>
 *{box-sizing:border-box}
-body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 system-ui;--r:#f75049;--h:rgba(247,80,73,.7);--l:rgba(247,80,73,.38);--c:#5ef6ff;--w:#ece9e6;--y:#f0b537;--a:#fcee0a}
-#gw{position:absolute;top:0;left:0;width:100%;height:140px;background:linear-gradient(rgba(247,80,73,.2),rgba(247,80,73,0))}
+body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 system-ui;--r:#f75049;--h:#f75049b2;--l:#f7504961;--c:#5ef6ff;--w:#ece9e6;--y:#f0b537;--a:#fcee0a}
+#gw{position:absolute;top:0;left:0;width:100%;height:140px;background:linear-gradient(#f7504933,#f7504900)}
 /* строки экрана — position:relative: глитч сдвигает их через left, а плитки внутри числятся за своей строкой */
 #app,#app>*{position:relative}
 #h{display:flex;align-items:flex-end;justify-content:space-between;padding-bottom:6px;border-bottom:1px solid var(--l)}
@@ -31,14 +31,17 @@ body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 syste
 .lab span{flex:1}
 .lab small{color:var(--h);font-weight:500}
 .lab i{font-style:normal}
-.pb{width:24px;height:20px;border:1px solid var(--l);color:var(--c);font-size:10px;display:flex;align-items:center;justify-content:center}
+.pb{width:24px;height:20px;border:1px solid var(--l);color:var(--c);display:flex;align-items:center;justify-content:center}
+/* стрелки — треугольники SVG с центром масс в центре квадрата (◀ ▶ шрифта по рамке глифа съезжают к основанию) */
+.pb svg{width:9px;height:10px;fill:currentColor}
 .pn{min-width:30px;text-align:center;font-size:12px;color:var(--h)}
 /* ячейка: слева скоба или полоса редкости, контур со срезанным углом; у кнопок — ступенька сверху */
 .c{position:relative;z-index:0}
-.fr{position:absolute;left:0;top:0;width:100%;height:100%;z-index:-1;fill:rgba(247,80,73,.08);stroke:var(--l)}
+.fr,.x svg,.fb,.gs{position:absolute;left:0;top:0;width:100%;height:100%}
+.fr{z-index:-1;fill:#f7504914;stroke:var(--l)}
 .fr .b{fill:var(--a,var(--r));stroke:none}
-.on>.fr{fill:rgba(247,80,73,.4);stroke:var(--r)}
-.leg>.fr{fill:rgba(240,181,55,.1)}
+.on>.fr{fill:#f7504966;stroke:var(--r)}
+.leg>.fr{fill:#f0b5371a}
 .g{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
 .g2{grid-template-columns:1fr 1fr}
 .t{height:46px;min-width:0;padding:6px 9px 5px 11px;display:flex;flex-direction:column;justify-content:space-between}
@@ -55,38 +58,37 @@ body{margin:0;padding:12px;background:#0e0e17;color:#f75049;font:15px/1.35 syste
 /* микротекст: служебные коды и мелкая печать */
 .u{font:600 8px/1.25 system-ui;color:var(--l);white-space:nowrap}
 .tr,.dl,.x{position:relative}
-.x svg{position:absolute;left:0;top:0;width:100%;height:100%;fill:none;stroke:var(--l)}
 /* «Вырезать рекламу» — строка без рамки с настоящим переключателем: угловатая дорожка и ползунок */
-.sw{display:flex;align-items:center;gap:8px;padding:6px 0;border:solid rgba(247,80,73,.2);border-width:1px 0}
+.sw{display:flex;align-items:center;gap:8px;padding:6px 0;border:solid #f7504933;border-width:1px 0}
 .sl{flex:1;color:var(--w)}
 .sl .u{display:block;margin-top:4px}
 /* дорожка — CSS-рамка, ползунок — flex по центру: как на первом экране */
 .tr{width:44px;height:20px;display:flex;align-items:center;padding:0 3px;border:1px solid var(--l)}
 .tr i{width:16px;height:12px;background:var(--l)}
-.sw.on .tr{justify-content:flex-end;border-color:#1ded83;background:rgba(29,237,131,.16)}
+.sw.on .tr{justify-content:flex-end;border-color:#1ded83;background:#1ded8329}
 .sw.on .tr i{background:#1ded83}
 .sw.on>.u{color:#1ded83}
-/* «Скачать» — главная: сплошной жёлтый, тёмный текст, свечение; без выбора и пока идёт запрос «Скачать» — тёмная
-   с жёлтым контуром. Свечение — тень вложенного блока по корпусу кнопки. Внизу слева — код запроса мелким текстом.
-   На широком Desktop пара кнопок не шире 420 px и прижата вправо */
+/* «Скачать» и ✕ — пара, как «Смотрите на» и «Трейлер» на cyberpunk.net (13.11): рамка #fcee0a 2 px — залитое
+   кольцо (обводка двоилась на масштабе 125 %). У «Скачать» срезан внешний левый верхний угол, у ✕ — внешний
+   правый нижний; обращённые друг к другу стороны прямые, с пазом посередине — кнопки стыкуются.
+   Без выбора «Скачать» тёмная с жёлтой подписью, с выбором — сплошная, подпись чёрная; внизу слева — код запроса.
+   При нажатии — глитч (.gg): заливка рвётся на полосы. Пара не шире 420 px, справа */
 #ac{display:flex;gap:8px;margin:8px 0 0 auto;max-width:420px}
-.dl{flex:1;z-index:0;height:40px;display:flex;align-items:center;justify-content:center;padding-bottom:5px}
-.gl{position:absolute;left:8px;top:6px;width:calc(100% - 10px);height:32px;z-index:-1}
-/* «Скачать» — кислотный жёлтый игры #fcee0a, как на первом экране */
-.on .gl{box-shadow:0 0 14px rgba(252,238,10,.45)}
-.dl .fr{fill:#0e0e17;stroke:rgba(252,238,10,.45)}
-.dl .b{fill:rgba(252,238,10,.45)}
-.dl b{color:rgba(252,238,10,.55);font:700 14px/1 system-ui;letter-spacing:.08em}
-.dl .u{position:absolute;left:14px;bottom:4px;color:rgba(252,238,10,.45)}
-.dl.on .fr,.dl.on .b{fill:var(--a);stroke:var(--a)}
-.dl.on b{color:#0e0e17}
-.dl.on .u{color:rgba(14,14,23,.6)}
-/* ✕ — квадратная иконка: волосяной контур, уголки, крест из двух линий; горит, только когда есть что сбросить */
-.x{width:40px;height:40px}
-.x svg{stroke:rgba(247,80,73,.22)}
-.x .cr{stroke:var(--l);stroke-width:1.6}
-.x.on .o{stroke:var(--h)}
-.x.on .cr{stroke:var(--c)}
+.dl{flex:1;z-index:0;height:40px;display:flex;align-items:center;justify-content:center;padding-bottom:3px}
+.fb,.gs{z-index:-1;fill:var(--a)}
+.fb .k{fill:#0e0e1799}
+.on .fb .k{fill:var(--a)}
+.gs,.gg .fb{display:none}
+.gg .gs{display:block}
+.dl b{position:relative;color:var(--a);font:700 16px/1 system-ui;letter-spacing:.06em}
+.dl.on b,.gg b{color:#0e0e17}
+/* ✕ — вторая кнопка пары: та же рамка, тусклая, пока сбрасывать нечего; крест — в центре масс кнопки
+   (паз слева и срез справа внизу поднимают его на полпикселя) */
+.x{width:44px;height:40px}
+.x svg{fill:#fcee0a59;stroke:none}
+.x.on svg{fill:var(--a)}
+.x .cr{fill:none;stroke:#fcee0a73;stroke-width:2}
+.x.on .cr{stroke:var(--a)}
 .m{color:var(--y);font-size:13px;margin-top:5px}
 .gz{color:#5ef6ff;--r:#5ef6ff;--l:#5ef6ff;--h:#5ef6ff;--c:#f0b537;--w:#f0b537}
 </style>
@@ -134,16 +136,18 @@ function clr() { sv = sa = -1; draw() }
 function tsb() { sb = 1 - sb; try { localStorage.sb = sb } catch (e) {} draw() }
 // запрос «Скачать»: f:<номер видео>:<номер звука>:<sb>; ничего не выбрано — запроса нет (код — микротекстом на кнопке)
 const RQ = () => (sv >= 0 || sa >= 0) && 'f:' + (sv < 0 ? '' : sv) + ':' + (sa < 0 ? '' : sa) + ':' + sb;
-function dl() { const q = RQ(); q && ask(q) }
+function dl() { const q = RQ(); q && (ask(q), GB()) }
+// внутренний контур рамки «Скачать» (на 2 px внутрь, против часовой); полосы глитча
+const IN = w => `M10.8 2L2 10.8V38H${w - 2}V24H${w - 8}V16H${w - 2}V2Z`,
+  GS = w => `<svg class="gs" viewBox="0 0 ${w} 40" preserveAspectRatio="none"><path d="M-6 0h${w}v8H-6zM5 16h${w}v8H5zM-3 32h${w}v8H-3z"/>`
+    + `<path fill="#5ef6ff" d="M8 8h${w}v8H8z"/><path fill="#f75049" d="M-9 24h${w}v8H-9z"/></svg>`;
 
 const MB = x => !x ? '?' : x >= 1024 ? (x / 1024).toFixed(1) + 'G' : (x < 10 ? +x.toFixed(1) : Math.round(x)) + 'M';
-// Рамки — inline-SVG в точных пикселях, как FR() в панели (clip-path в песочнице запрещён).
-// s — левый край: 0 скоба с вырезом, 1 сплошная полоса редкости (цвет — переменная --a ячейки);
-// k — кнопка «Скачать»: ступенька сверху и срез угла 8 вместо 7, как на первом экране
-const FR = (w, h, k, s) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path class="b" d="M0 1h4v' + (h - 2)
-  + (s ? 'h-4z' : 'h-4v-' + (h / 4 - .5) + 'l2-2v-' + (h / 2 - 5) + 'l-2-2z') + '"/><path d="M7.5 1.5' + (k ? 'h' + (w * .3 | 0) + 'l4 4' : '')
-  + 'H' + (w - 1.5) + 'V' + (h - 8.5 - k) + 'l-' + (7 + k) + ' ' + (7 + k) + 'H7.5z"/></svg>';
-const CL = (x, w, h, k, c, f, s) => `<div class="c ${c}" data-k="${f}"${s || ''}>${FR(w, h, k, s)}${x}</div>`;
+// Рамка плитки — inline-SVG в точных пикселях, как FR() в панели (clip-path в песочнице запрещён):
+// слева сплошная полоса редкости (цвет — переменная --a плитки), контур со срезанным нижним правым углом
+const FR = (w, h) => '<svg class="fr" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><path class="b" d="M0 1h4v' + (h - 2)
+  + 'h-4z"/><path d="M7.5 1.5H' + (w - 1.5) + 'V' + (h - 8.5) + 'l-7 7H7.5z"/></svg>';
+const CL = (x, w, h, c, f, s) => `<div class="c ${c}" data-k="${f}"${s}>${FR(w, h)}${x}</div>`;
 // «Редкость»: видео — по качеству, звук — по кодеку
 const RV = q => (h => h >= 2160 ? '#f0b537' : h >= 1440 ? '#9d2bf5' : h >= 1080 ? '#2f7fff' : h >= 720 ? '#1ded83' : '#6c6876')(parseInt(q) || 0);
 const RA = n => /^AAC/.test(n) ? '#1ded83' : /^Opus/.test(n) ? '#9d2bf5' : '#6c6876';
@@ -153,13 +157,14 @@ function sec(t, name) {
   const k = K(t), n = D.n[k], v = t == 'v', w = v ? (Wd - 8) / 3 : (Wd - 4) / 2;
   if (!D.c[k]) return '';
   return `<div class="lab"><span>${name} <small>${D.c[k]}</small></span>`
-    + (n > 1 ? `<i class="pb" data-k="${t}-">◀</i><i class="pn">${pg[t] + 1}/${n}</i><i class="pb" data-k="${t}+">▶</i>` : '')
+    + (n > 1 ? `<i class="pb" data-k="${t}-"><svg viewBox="0 0 9 10"><path d="M0.5 5L6.5 1V9Z"/></svg></i><i class="pn">${pg[t] + 1}/${n}</i>`
+      + `<i class="pb" data-k="${t}+"><svg viewBox="0 0 9 10"><path d="M8.5 5L2.5 1V9Z"/></svg></i>` : '')
     + `</div><div class="g${v ? '' : ' g2'}">` + P[t][pg[t]].map((x, i) => {
       // ID длиннее 8 знаков (dash-1461665382806657v у Instagram) распирает сетку и руками его не набрать — не показываем
       const g = pg[t] * D.p[k] + i, on = (v ? sv : sa) == g;
       return CL(`<div><span class="q">${N(x[1])}</span>${x[4] ? '<span class="tag">♪</span>' : x[0].length < 9 ? `<span class="i">${esc(x[0])}</span>` : ''}</div>`
         + `<div><span class="k">${N(x[2])}</span><span class="z">${MB(x[3])}</span></div>`,
-        w, 46, 0, 't' + (on ? ' on' : v && parseInt(x[1]) >= 2160 ? ' leg' : ''), t + g, ` style="--a:${v ? RV(x[1]) : RA(x[1])}"`);
+        w, 46, 't' + (on ? ' on' : v && parseInt(x[1]) >= 2160 ? ' leg' : ''), t + g, ` style="--a:${v ? RV(x[1]) : RA(x[1])}"`);
     }).join('') + '</div>';
 }
 
@@ -179,6 +184,15 @@ function GZ() {
   f();
 }
 
+// «Скачать» — глитч при нажатии, как у кнопок на cyberpunk.net: шесть кадров по 40 мс через кадр показывают
+// заливку, порванную на сдвинутые полосы с вспышками циана и красного (.gg), а кнопка дёргается вбок.
+// Сдвиг — left, не transform: Telegram Desktop сделал бы кнопку слоем, и тапы шли бы мимо
+function GB() {
+  let n = 6;
+  const f = () => { const e = $('dl'); e && (e.classList.toggle('gg', n % 2 > 0), e.style.left = n ? (Math.random() * 12 - 6 | 0) + 'px' : ''); n-- || clearInterval(i) }, i = setInterval(f, 40);
+  f();
+}
+
 function draw() {
   Wd = app.offsetWidth || Wd;
   let h = `<div id="h"><span id="tt">ВСЕ ФОРМАТЫ</span><small>${D.c ? D.c.join(' · ') : ''}</small></div>`;
@@ -195,12 +209,12 @@ function draw() {
   if (D.y) h += `<div class="sw${sb ? ' on' : ''}" data-k="s"><div class="sl">ВЫРЕЗАТЬ РЕКЛАМУ<i class="u">SPONSORBLOCK · СЕГМЕНТЫ</i></div>`
     + `<i class="u">${sb ? 'ВКЛ' : 'ВЫКЛ'}</i><div class="tr"><i></i></div></div>`;
   // w — ширина рамки «Скачать»: пара кнопок не шире 420 px, минус ✕ и зазор; q — «Скачать» ждёт ответа бота
-  const w = Math.min(Wd, 420) - 48, q = busy[0] == 'f';
-  app.innerHTML = h + `<div id="ac"><div class="dl${t && !q ? ' on' : ''}" data-k="g"><i class="gl"></i>`
-    // рамка: скоба слева, ступенька сверху, срезанный нижний правый угол
-    + FR(w, 40, 1) + `<b>${q ? 'ЗАПРОС…' : 'СКАЧАТЬ' + (t && z ? ' · ' + z : '')}</b><i class="u">REQ ${RQ() || '—'}</i></div>`
-    + `<div class="x${t ? ' on' : ''}" data-k="c"><svg viewBox="0 0 40 40"><path d="M0.5 0.5H39.5V39.5H0.5Z"/><path class="o" d="M0.5 7V0.5H7M33 0.5H39.5V7M39.5 33V39.5H33M7 39.5H0.5V33"/>`
-    + '<path class="cr" d="M15 15L25 25M25 15L15 25"/></svg></div></div>' + (note ? `<div class="m">${esc(note)}</div>` : '');
+  const w = Math.min(Wd, 420) - 52, q = busy[0] == 'f';
+  app.innerHTML = h + `<div id="ac"><div class="dl${t && !q ? ' on' : ''}" data-k="g" id="dl">`
+    // рамка: кольцо = внешний контур по часовой и внутренний против (дырка при любом правиле заливки) + тёмная середина; срезан левый верхний угол, справа паз
+    + `<svg class="fb" viewBox="0 0 ${w} 40" preserveAspectRatio="none"><path d="M10 0H${w}V18H${w - 6}V22H${w}V40H0V10Z${IN(w)}"/><path class="k" d="${IN(w)}"/></svg>${GS(w)}<b>${q ? 'ЗАПРОС…' : 'СКАЧАТЬ' + (t && z ? ' · ' + z : '')}</b></div>`
+    + `<div class="x${t ? ' on' : ''}" data-k="c"><svg viewBox="0 0 44 40"><path d="M0 0H44V32L36 40H0V22H8V18H0ZM2 2V16H10V24H2V38H35.2L42 31.2V2Z"/>`
+    + '<path class="cr" d="M17 14.5L27 24.5M27 14.5L17 24.5"/></svg></div></div>' + (note ? `<div class="m">${esc(note)}</div>` : '');
   if (first) { first = 0; GZ() }
 }
 
